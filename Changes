@@ -1,0 +1,15 @@
+Revision history for Perl extension ClearCase::Wrapper.
+
+0.01  Tue Mar 28 10:59:30 2000
+	- original version; created by h2xs 1.20
+	- This is a replacement for ClearCase::Ct and picks up
+	  where version 1.20 of that leaves off.
+
+0.10 Thu Apr  6 03:32:02 EDT 2000
+	- First version in production use. Has not brought all
+	  the esoteric, underused functionality of ClearCase::Ct
+	  along but all the core stuff seems to work just fine.
+
+0.14 Fri May 12 12:13:11 EDT 2000
+	- FCS (first CPAN shipment). Some extensions tested on NT, not
+	  all.
