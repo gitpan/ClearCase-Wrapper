@@ -2,7 +2,22 @@
 
 # The bulk of the code comes from here ...
 BEGIN {
-    require ClearCase::Wrapper if !$ENV{CLEARCASE_WRAPPER_NATIVE};
+    if (!$ENV{CLEARCASE_WRAPPER_NATIVE}) {
+	# The "standard" set of overrides supplied with the package.
+	# These are autoloaded and thus fairly cheap to 'require'
+	# even though there's lots of code down here ...
+	require ClearCase::Wrapper;
+
+	# A site admin may optionally put local overrides here.
+	# These are not autoloaded due to a limitation of AutoLoader
+	# that more than one file may not contribute to a single
+	# autoloaded package. But upgrades to new ClearCase::Wrapper
+	# versions will be substantially easier if all local tweaking
+	# in this file. A subroutine declared here will eclipse one
+	# of the same name autoloaded above.
+	local $^W = 0;	# in case a sub is redefined in Site.pm
+	require ClearCase::Wrapper::Site;
+    }
 }
 
 use strict;

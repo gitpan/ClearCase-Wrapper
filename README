@@ -69,28 +69,39 @@ anything with it, as the supplied sample enhancements may demonstrate.
 SAMPLE ENHANCEMENTS
 --------------
 
-The interesting files in this distribution are "cleartool.plx" and
-"Wrapper.pm".  The first is the cleartool wrapper program; it's short,
-simple, and generic and should need no local modification. Wrapper.pm
-provides some similarly boilerplate infrastructure above the __END__
-token; the site-specific customizations are made only below __END__.
+The interesting files in this distribution are cleartool.plx,
+Wrapper.pm, and Site.pm.  The first is the cleartool wrapper program;
+it's short and generic and should need no local modification.
+Wrapper.pm provides some similarly boilerplate infrastructure above the
+__END__ token; all customizations are made in the AutoSplit area below
+the __END__.
 
-These are supplied in the form of subroutines which are called instead
-of exec-ing the cleartool command of the same name, using the AutoSplit/
-AutoLoader features of Perl.
+The Site.pm file provides an optional location for site-specific
+enhancements. This file is not autoloaded due to a limitation of
+AutoLoader. Thus a site admin wanting to tweak this module has two
+options: (1) make the changes in the AutoSplit area of Wrapper.pm where
+they'll get the benefit of autoloading, but you'll have to merge your
+changes with mine when updating the module. Or (2) make changes in
+Site.pm; subroutines defined there are used directly without benefit
+of autoloading but in return it will be much easier to maintain since
+I provide only a stub Site.pm.
+
+Customizations are supplied in the form of subroutines which will be
+called instead of exec-ing the cleartool command of the same name,
+using the AutoSplit/ AutoLoader features of Perl.
 
 The AutoSplit area of Wrapper.pm *should* be delivered empty since I
 can't predict what customizations you may prefer. But in fact I've
 placed some of my more generally useful customizations there for
 pedagogical purposes. I spent a lot of time trying to decide whether to
 deliver these in place or to bury them in a README or a
-Wrapper.pm.sample; on the one hand, moving them aside would complicate
-the install process and some percentage of users (the ones who don't
-read README files!) would never find them. On the other hand, once
-they're delivered in-place, no amount of protestation will convince
-some people that they're not part of the "product" per se. In the end I
-decided on the latter strategy but will say this loudly in hopes of it
-being heard:
+SAMPLE_ENHANCEMENTS file; on the one hand, moving them aside would
+complicate the install process and some percentage of users (the ones
+who don't read README files!) would never find them. On the other hand,
+once they're delivered in-place, no amount of protestation will
+convince some people that they're not part of the "product" per se. In
+the end I decided on the latter strategy but will say this loudly in
+hopes of it being heard:
 
 ANYTHING IN WRAPPER.PM AFTER THE "=head1 CLEARTOOL ENHANCEMENTS" LINE
 IS A **SAMPLE**.  IT IS **YOURS** TO CONFIGURE, ADD TO, OR SUBTRACT
@@ -105,7 +116,7 @@ The wrapper script also looks for a file called ~/.clearcase_profile.pl
 (note same name ClearCase supports except with a .pl suffix) containing
 personal customizations. No sample of this is delivered; the syntax is
 pure Perl and the idea would be to modify @ARGV before the override
-subroutine and/or exec() see it.
+subroutine and/or exec() ever see it.
 
 
 TYPICAL USES / HIGHLIGHTS OF SUPPLIED FEATURES
@@ -169,7 +180,7 @@ To make a private testing version in your home directory, use instead:
    perl Makefile.PL PREFIX=~
 
 which will cause "make install" to copy files into ~/lib/perl5/....
-Then set the environment variable:
+Then set the environment variable to something like:
 
    PERL5LIB=$HOME/lib/perl5:$HOME/lib/perl5/site_perl
 
@@ -207,13 +218,14 @@ passing -/dbg=1 on the command line. See "perldoc ClearCase::Argv" and
 TESTED PLATFORMS
 ----------------
 
-This module is known to work on Solaris 2.6/7 and Windows NT 4.0.
-Although that's only two platforms, the spread between them is wide
-enough that I'd expect it to work without significant modification on
-any other platform that supports perl 5.004 or above.
+This module is in use on nearly all ClearCase platforms, including
+Solaris 2.6/7 and Windows NT 4.0.  I would expect it to work without
+significant modification on any CC platform that supports perl 5.004 or
+above.
 
-Note that while the module itself works under NT, the sample enhancements
-haven't all been well exercised there.
+Note that while the module itself works on Windows, the sample
+enhancements haven't necessarily been well exercised there. Some have,
+some haven't.
 
 FEEDBACK
 --------

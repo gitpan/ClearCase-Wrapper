@@ -1,3 +1,4 @@
+<HTML><BODY>
 This is basically a "wrapper construction kit" for cleartool. Whereas
 most users make an alias called 'ct' or similar for cleartool, this
 Perl module comes with a wrapper program to which you can give the same
@@ -10,3 +11,4 @@ be called 'ct'; it can be named whatever you like, even 'cleartool'.
 Note: newer versions may be present at
 <A HREF="http://www.perl.com/CPAN-local/modules/by-module/IPC/DSB/">
 http://www.perl.com/CPAN-local/modules/by-module/IPC/DSB/</A>.
+</BODY></HTML>

@@ -23,6 +23,7 @@ WriteMakefile(
     'VERSION_FROM'	=> 'Wrapper.pm', # finds $VERSION
     'EXE_FILES'		=> [ 'cleartool.plx' ],
     'PREREQ_PM' => {
+	  File::Spec		=> 0.82,
 	  Getopt::Long		=> 2.17,
 	  ClearCase::Argv	=> 0.23,
 	  Argv			=> 0.53,

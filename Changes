@@ -33,3 +33,16 @@ Revision history for Perl extension ClearCase::Wrapper.
 0.20 Wed Aug  9 13:52:56 EDT 2000
 	- Added mkelem -do flag.
 	- The usual round of bugfixes to sample enhancements.
+
+0.21 Fri Sep 22 10:02:24 EDT 2000
+	- Added 'diffcs' command.
+
+0.22 Wed Nov  1 20:58:08 EST 2000
+	- Some work on mkelem to allow aggregation to work
+	  in snapshot views (untested).
+	- Added a dependency on File::Spec 0.82, just because it's
+	  goodness and makes coding of ClearCase::Wrapper easier.
+	- Added support for a Site.pm file containing site-specific
+	  work. THIS IS A SIGNIFICANT IMPROVEMENT, as without Site.pm
+	  it's hard to modify and/or add new features to
+	  the module and also accept new versions from CPAN.

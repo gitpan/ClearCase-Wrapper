@@ -1,13 +1,14 @@
 package ClearCase::Wrapper;
 
-$VERSION = '0.20';
+$VERSION = '0.22';
 
 require 5.004;
 
 use constant MSWIN => $^O =~ /MSWin32|Windows_NT/i;
 
 use AutoLoader 'AUTOLOAD';
-use Getopt::Long;
+# Suppress the Getopt::Long->import(), we need our own GetOptions().
+require Getopt::Long;
 
 # Technically we should use Getopt::Long::Configure() for these but
 # there's a tangled version history and this is faster anyway.
@@ -37,21 +38,17 @@ BEGIN {
 
 use strict;
 
-use vars qw($prog $libdir @Admins);
+use vars qw($prog $libdir);
 $prog = $ENV{CLEARCASE_WRAPPER_PROG} || (split m%[/\\]+%, $0)[-1];
 
-# A list of users who are exempt from certain restrictions.
-@Admins = qw(vobadm);
-
-# Override the user's preferences while interacting with clearcase.
-umask 002 if !grep(/^$ENV{LOGNAME}$/, @Admins);
-
-# Similar to above but would withstand competition from settings in
-# .kshrc et al (e.g. in a setview). It's critical to build DO's with
-# generous umasks in case they get winked in. We allow it to be
-# overridden lower than 002 but not higher.
-$ENV{CLEARCASE_BLD_UMASK} = 2
-	if !defined($ENV{CLEARCASE_BLD_UMASK}) || $ENV{CLEARCASE_BLD_UMASK} > 2;
+# Getopt::Long::GetOptions() respects '--' but strips it, while
+# we want to respect '--' and leave it in. Thus this override.
+sub GetOptions {
+    @ARGV = map {/^--$/ ? qw(=--= --) : $_} @ARGV;
+    my $ret = Getopt::Long::GetOptions(@_);
+    @ARGV = map {/^=--=$/ ? qw(--) : $_} @ARGV;
+    return $ret;
+}
 
 # Take a string and an array, return the index of the 1st occurrence
 # of the string in the array.
@@ -65,8 +62,13 @@ sub FirstIndex {
 
 # Implements the -me -tag convention (see POD).
 if (my $me = FirstIndex('-me', @ARGV)) {
-    if ($ARGV[0] =~ /^(?:set|start|end)view$|^workon$/) {
-	for (reverse @ARGV) {
+    if ($ARGV[0] =~ /^(?:set|start|end)view$|^(?:workon|rdl)$/) {
+	my $delim = 0;
+	for (@ARGV) {
+	    last if /^--$/;
+	    $delim++;
+	}
+	for (reverse @ARGV[0..$delim-1]) {
 	    if (/^\w+$/) {
 		$_ = join('_', $ENV{LOGNAME}, $_);
 		last;
@@ -119,7 +121,7 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
    $lsview	= "* [-me]";
    $mkelem	= "\n* [-dir|-rec] [-do]";
    $mklabel	= "\n* [-up]";
-   $mkview	= "\n* [-me] [-clone] [-local]";
+   $mkview	= "\n* [-me] [-clone]";
    $setcs	= "\n\t     * [-clone view-tag] [-expand] [-sync]";
    $setview	= "* [-me] [-drive drive:] [-persistent]";
    $uncheckout	= "* [-nc]";
@@ -128,6 +130,7 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
    # Extended messages for pseudo cleartool commands that we implement here.
    local $0 = $ARGV[0] || '';
    $comment	= "$0 [-new] object-selector ...";
+   $diffcs	= "$0 view-tag-1 [view-tag-2]";
    $edattr	= "$0 object-selector ...";
    $edit	= "$0 <co-flags> [-ci] <ci-flags> pname ...";
    $grep	= "$0 [grep-flags] pattern element";
@@ -163,16 +166,35 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
 # followed by "perldoc ClearCase::Wrapper" iff <cmd> is extended below.
 sub man {
     my $page = pop @ARGV;
+    my $module = __PACKAGE__;
     ClearCase::Argv->man($page)->system unless $page eq $prog;
-    if (defined $ClearCase::Wrapper::{$page} || $page eq $prog) {
-	require File::Basename;
-	# This EV hack causes perldoc to search for the right keyword (!)
-	$ENV{PERLDOC_PAGER} ||= 'more +/' . uc($page)
-		if !MSWIN && defined($ClearCase::Wrapper::{$page});
-	my $psep = MSWIN ? ';' : ':';
-	$ENV{PATH} = join($psep, File::Basename::dirname($^X), $ENV{PATH});
-	Argv->perldoc(__PACKAGE__)->exec;
+    my $override = exists $ClearCase::Wrapper::{$page};
+    exit $? unless $override || $page eq $prog;
+    if ($override) {
+	# We need to determine which .pm file to run perldoc on.
+	# Delete the function in question from the symbol table,
+	# then drag in the Site.pm file again and see if it came back.
+	delete $ClearCase::Wrapper::{$page};
+	delete $INC{'ClearCase/Wrapper/Site.pm'};
+	{
+	    local $^W = 0;
+	    require ClearCase::Wrapper::Site;
+	}
+	$module = 'ClearCase::Wrapper::Site'
+		    if exists $ClearCase::Wrapper::{$page};
+	# This EV hack causes perldoc to search for the right keyword
+	# within the perldoc.
+	if (!MSWIN) {
+	    require Config;
+	    my $pager = $Config::Config{pager};
+	    $ENV{PERLDOC_PAGER} ||= "$pager +/" . uc($page)
+		if $pager =~ /more|less/;
+	}
     }
+    my $psep = MSWIN ? ';' : ':';
+    require File::Basename;
+    $ENV{PATH} = join($psep, File::Basename::dirname($^X), $ENV{PATH});
+    Argv->perldoc($module)->exec;
     exit $?;
 }
 
@@ -245,11 +267,13 @@ sub Pred {
     }
 }
 
-# Examines current ARGV, returns the specified or working view tag.
+# Examines supplied arg vector, returns the explicit or implicit working view.
 sub ViewTag {
     my $vtag;
-    local(@ARGV) = @ARGV;
-    GetOptions("tag=s" => \$vtag) if @ARGV;
+    if (@_) {
+	local(@ARGV) = @_;
+	GetOptions("tag=s" => \$vtag);
+    }
     if (!$vtag) {
 	require Cwd;
 	my $cwd = Cwd::fastgetcwd;
@@ -326,8 +350,8 @@ itself plus any files it includes).
 =item 3. New B<-start> flag
 
 Prints the preferred I<initial working directory> of a view by
-examining its config spec. If the conventional string C<##:Start:
-I<dir>> is present then the value of I<dir> is printed. Otherwise no
+examining its config spec. If the conventional string C"<##:Start:
+I<dir>"> is present then the value of I<dir> is printed. Otherwise no
 output is produced. The B<workon> command (see) uses this value.  E.g.,
 using B<workon> instead of B<setview> with the config spec:
 
@@ -337,17 +361,23 @@ using B<workon> instead of B<setview> with the config spec:
 
 would automatically cd to C</vobs_fw/src/java> within the set view.
 
+=item 4. New B<-rdl> flag
+
+Prints the value of the config spec's C"<##:RDL:> attribute.
+
 =back
 
 =cut
 
 sub catcs {
     my(%opt, $op);
-    GetOptions(\%opt, qw(cmnt expand start sources viewenv vobs));
+    GetOptions(\%opt, qw(cmnt expand rdl start sources viewenv vobs));
     if ($opt{sources}) {
 	$op = '';
     } elsif ($opt{expand}) {
 	$op = 'print';;
+    } elsif ($opt{'rdl'}) {
+	$op = 's%##:RDL:\s*(.+)%print "$+\n";exit 0%ie';
     } elsif ($opt{viewenv}) {
 	$op = 's%##:ViewEnv:\s+(\S+)%print "$+\n";exit 0%ie';
     } elsif ($opt{start}) {
@@ -357,7 +387,7 @@ sub catcs {
     }
     if (defined $op) {
 	$op .= ' unless /^\s*#/' if $op && $opt{cmnt};
-	my $tag = ViewTag();
+	my $tag = ViewTag(@ARGV);
 	die Msg('E', "no view tag specified or implicit") if !$tag;;
 	my($vws) = reverse split '\s+', ClearCase::Argv->lsview($tag)->qx;
 	exit Burrow('CATCS_00', "$vws/config_spec", $op);
@@ -368,12 +398,12 @@ sub catcs {
 
 Extended to handle the B<-dir/-rec/-all/-avobs> flags.
 
-Extended to allow B<symbolic links> to be checked in (by simply
-operating on the target of the link instead).
+Extended to allow B<symbolic links> to be checked in (by operating on
+the target of the link instead).
 
-Extended to implement a B<-diff> flag, which runs a B<I<ct diff -pred>>
-command before each checkin so the user can look at his/her changes
-while typing the comment.
+Extended to implement a B<-diff> flag, which runs a B<I<diff -pred>>
+command before each checkin so the user can see his/her changes while
+typing the comment.
 
 Automatically supplies B<-nc> to checkins if the element list consists
 of only directories (since directories get a default comment).
@@ -382,7 +412,7 @@ Implements a new B<-revert> flag. This causes identical (unchanged)
 elements to be unchecked-out instead of being checked in.
 
 Since checkin is such a common operation, an unadorned I<ci> is
-"promoted" to I<ci -diff -dir> to save typing.
+"promoted" to I<ci -diff -dir -revert> to save typing.
 
 =cut
 
@@ -399,7 +429,7 @@ sub checkin {
     # Parse checkin and (potential) diff flags into different optsets.
     $ci->parse(qw(c|cfile=s cqe|nc
 		    nwarn|cr|ptime|identical|rm|cact|cwork from=s));
-    if ($opt{diff} || $opt{revert}) {
+    if ($opt{'diff'} || $opt{revert}) {
 	$ci->optset('DIFF');
 	$ci->parseDIFF(qw(serial_format|diff_format|window columns|options=s
 			    graphical|tiny|hstack|vstack|predecessor));
@@ -415,7 +445,7 @@ sub checkin {
     }
 
     # Unless -diff or -revert in use, we're done.
-    $ci->exec unless $opt{diff} || $opt{revert};
+    $ci->exec unless $opt{'diff'} || $opt{revert};
 
     # Make sure the -pred flag is there as we're going one at a time.
     my $diff = $ci->clone->prog('diff');
@@ -426,7 +456,7 @@ sub checkin {
     $ci->opts('-cqe', $ci->opts)
 			if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
 
-    $diff->stdout(0) if !$opt{diff};  # if -revert we only care about retcode
+    $diff->stdout(0) if !$opt{'diff'};  # if -revert we only care about retcode
     for $elem (@elems) {
 	my $chng = $diff->args($elem)->system('DIFF');
 	if ($opt{revert} && !$chng) {
@@ -445,8 +475,10 @@ sub checkin {
 
 For each ClearCase object specified, dump the current comment into a
 temp file, allow the user to edit it with his/her favorite editor, then
-change the objects's comment to the results of the edit. The B<-new>
-flag causes it to ignore the previous comment.
+change the objects's comment to the results of the edit. This is
+useful if you mistyped a comment and want to correct it.
+
+The B<-new> flag causes it to ignore the previous comment.
 
 See B<edattr> for editor selection rules.
 
@@ -534,6 +566,34 @@ sub diff {
     }
 }
 
+=item * DIFFCS
+
+New command.  B<Diffcs> dumps the config specs of two specified views
+into temp files and diffs them. If only one view is specified, compares
+against the current working view's config spec.
+
+=cut
+
+sub diffcs {
+    my %opt;
+    GetOptions(\%opt, qw(tag=s@));
+    my @tags = @{$opt{tag}} if $opt{tag};
+    push(@tags, @ARGV[1..$#ARGV]);
+    if (@tags == 1) {
+	my $cwv = ViewTag();
+	push(@tags, $cwv) if $cwv;
+    }
+    die Msg('E', "two view-tag arguments required") if @tags != 2;
+    my $ct = ClearCase::Argv->cleartool;
+    my @cstmps = map {"$_.cs"} @tags;
+    for my $i (0..1) {
+	Argv->new("$ct catcs -tag $tags[$i] >$cstmps[$i]")->autofail(1)->system;
+    }
+    Argv->new('diff', @cstmps)->dbglevel(1)->system;
+    unlink(@cstmps);
+    exit 0;
+}
+
 =item * EDATTR
 
 New command, inspired by the I<edcs> cmd.  B<Edattr> dumps the
@@ -545,7 +605,7 @@ because as of CC 3.2 the Unix GUI doesn't support modification of
 attributes and the quoting rules make it difficult to use the
 command line.
 
-THe environment variables WINEDITOR, VISUAL, and EDITOR are checked
+The environment variables WINEDITOR, VISUAL, and EDITOR are checked
 in that order for editor names. If none of the above are set, the
 default editor used is vi on UNIX and notepad on Windows.
 
@@ -675,7 +735,7 @@ sub edit {
     $co->opts('-nc', $co->opts);
     $co->autofail(1)->system if $co->args;
     $ed->system('-');
-    exit $? unless $opt{ci};
+    exit $? unless $opt{'ci'};
     # Use the wrapper for checkin in case of special flags.
     $ed->optsCI('-revert') unless $ed->optsCI;
     $ed->prog([$^X, '-S', $0, 'ci'])->exec('CI');
@@ -804,10 +864,10 @@ sub lsprivate {
 		if ($tag) {
 		    $dir =~ s%^/$tag%%i;
 		} else {
-		    $tag = ViewTag();
+		    $tag = ViewTag(@ARGV);
 		}
 	    } elsif (!$tag) {
-		$tag = ViewTag();
+		$tag = ViewTag(@ARGV);
 	    }
 	    $lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
 	} elsif ($opt{all}) {
@@ -892,10 +952,20 @@ sub mkelem {
 
     # Derive the list of view-private files to work on.
     my $scope = $opt{recurse} ? '-rec' : '-dir';
-    my $lsp = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -oth), $scope]);
-    $lsp->opts($lsp->opts, '-do') if $opt{'do'};
-    my @vps = $lsp->qx;
-    chomp(@vps);
+    my @vps;
+    # Can't use lsprivate in a snapshot view ...
+    if (-e '.@@/main/0') {
+	my $lsp = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -oth), $scope]);
+	$lsp->opts($lsp->opts, '-do') if $opt{'do'};
+	chomp(@vps = $lsp->qx);
+    } else {
+	require File::Spec;
+	File::Spec->VERSION(0.82);
+	die Msg('E', "-do not supported in a snapshot view") if $opt{'do'};
+	my $ls = Argv->new([$^X, '-S', $0, 'ls'], [qw(-s -view), $scope]);
+	chomp(@vps = $ls->qx);
+	@vps = map {File::Spec->rel2abs($_)} @vps;
+    }
     # Certain files we don't ever want to put under version control...
     @vps = grep !/(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)$/, @vps;
     ShowFound(@vps);
@@ -978,7 +1048,7 @@ sub mklabel {
     $mkl->syfail(1)->system;
     require File::Basename;
     require File::Spec;
-    File::Spec->VERSION(0.8);
+    File::Spec->VERSION(0.82);
     my($label, @elems) = $mkl->args;
     my %ancestors;
     for my $pname (@elems) {
@@ -1050,16 +1120,7 @@ name. Thus a user can simply type B<"mkview -me -tag foo"> and the view
 will be created as E<lt>usernameE<gt>_foo with the view storage placed
 in a default location determined by the sysadmin.
 
-=item 3. New B<-local> flag
-
-By default, views are placed in a standard path on a standard
-well-known view server.  Of course, the sophisticated user may specify
-any view-storage location explicitly, taking responsibility for getting
-the -host/-hpath/-gpath triple right. However, for simplicity a
-B<-local> flag is also supported which will attempt to place the view
-in a standard place on the local machine if such a place exists.
-
-=item 4. New B<-clone> flag
+=item 3. New B<-clone> flag
 
 This allows you to specify another view from which to copy the config
 spec and other properties. Note that it does I<not> copy view-private
@@ -1078,7 +1139,7 @@ sub mkview {
     # one of the approved areas.
     # Extension: if no view-storage area specified, use a standard one.
     my %opt;
-    GetOptions(\%opt, qw(local clone=s));
+    GetOptions(\%opt, qw(clone=s));
 
     if (!grep(/^-sna/, @ARGV)) {
 	my $gstg;
@@ -1090,30 +1151,6 @@ sub mkview {
 	my $vhost = 'sparc5';
 	my @vwsmap = qw(/data/ccase/vwstore/personal
 						/data/ccase/vwstore/personal);
-	if ($opt{local}) {
-	    warn Msg('W', "flag not implemented, no automounter in use");
-=pod
-	    require Sys::Hostname;
-	    my $tmphost = Sys::Hostname::hostname();
-	    @tmpmap = map {(split /[\s:]/)[0,2]}
-		grep {m%/$tmphost\s+$tmphost:.*/vwstore%}
-		qx(ypcat -k auto_dev);
-	    if (!@tmpmap) {
-		warn Msg('W', "no vws area on $tmphost, using $vwsmap[0]/...");
-	    } else {
-		@vwsmap = @tmpmap[0,1];
-		$vhost = $tmphost;
-		if (@tmpmap > 2) {
-		    my %vwdirs = @tmpmap;
-		    warn Msg('W', "multiple storage areas (@{[keys %tmpmap]}) ",
-					    "on $vhost, using $vwsmap[0]/...");
-		}
-		die Msg('E', "no such storage location: $vwsmap[0]")
-							    if !-d $vwsmap[0];
-	    }
-=cut
-	}
-
 	{
 	    local(@ARGV) = @ARGV;	# operate on temp argv
 	    my %ignore;
@@ -1146,8 +1183,9 @@ sub mkview {
     }
 
     # Policy: users' views should be prefixed by username.
-    warn Msg('W', "personal view names should match $ENV{LOGNAME}_*")
-	if !grep(/^$ENV{LOGNAME}$/, @Admins) && $opt{tag} !~ /^$ENV{LOGNAME}_/;
+    die Msg('E', "personal view names must match $ENV{LOGNAME}_*")
+		    if defined(@Admins) && !grep(/^$ENV{LOGNAME}$/, @Admins) &&
+						$opt{tag} !~ /^$ENV{LOGNAME}_/;
 
     # If an option was used requiring a special config spec, make the
     # view here, change the cspec, then exit. Must be done this way
@@ -1204,7 +1242,7 @@ sub mount {
     GetOptions(\%opt, qw(all));
     my $mount = ClearCase::Argv->new(@ARGV);
     $mount->autofail(1);
-    $mount->parse('options=s');
+    $mount->parse(qw(persistent options=s));
     die Msg('E', qq(Extra arguments: "@{[$mount->args]}"))
 						if $mount->args && $opt{all};
     my @tags = $mount->args;
@@ -1215,7 +1253,10 @@ sub mount {
     # The subset which are not mounted.
     my @todo = map {(split /\s+/)[1]} grep /^\s/, @public;
     # If no vobs are mounted, let the native mount -all proceed.
-    return 0 if @public == @todo;
+    if ($opt{all} && @public == @todo) {
+	push(@ARGV, '-all');
+	return 0;
+    }
     # Otherwise mount what's needed one by one.
     for (@todo) {
 	$mount->args($_)->system;
@@ -1257,20 +1298,12 @@ sub setview {
     my %opt;
     GetOptions(\%opt, qw(exec=s drive=s login ndrive persistent));
     my $child = $opt{'exec'};
-    {
-	# This hack seems necessary to support $(shell ...) in clearmake
-	# under MKS 6.2. Don't know why, something to do with the
-	# typeset -I COMSPEC in environ.ksh?
-	my $comspec = $ENV{ComSpec} || $ENV{COMSPEC};
-	delete $ENV{COMSPEC};
-	$ENV{ComSpec} = $comspec;
-    }
     if ($ENV{SHELL}) {
 	$child ||= $ENV{SHELL};
     } else {
 	delete $ENV{LOGNAME};
     }
-    $child ||= $ENV{ComSpec} || 'cmd.exe';
+    $child ||= $ENV{ComSpec} || $ENV{COMSPEC} || 'cmd.exe';
     my $vtag = $ARGV[-1];
     my @net_use = grep /\s[A-Z]:\s/i, Argv->new(qw(net use))->qx;
     my $drive = $opt{drive} || (map {/(\w:)/ && uc($1)}
@@ -1284,12 +1317,16 @@ sub setview {
 	$mounted = 1;
 	my %taken = map { /\s([A-Z]:)\s/i; $1 => 1 } @net_use;
 	for (reverse 'G'..'Z') {
+	    next if $_ eq 'X';	# X: is reserved (for CDROM?) on Citrix
 	    $drive = $_ . ':';
 	    if (!$taken{$drive}) {
 		local $| = 1;
-		print "Connecting $drive to \\\\view\\$vtag ... ";
-		last if !Argv->new(qw(net use),
-				$drive, "\\\\view\\$vtag", $pers)->system;
+		print "Connecting $drive to \\\\view\\$vtag ... "
+							    if !$opt{'exec'};
+		my $netuse = Argv->new(qw(net use),
+					    $drive, "\\\\view\\$vtag", $pers);
+		$netuse->stdout(0) if $opt{'exec'};
+		last if !$netuse->system;
 	    }
 	}
     } elsif ($opt{drive}) {
@@ -1308,7 +1345,9 @@ sub setview {
     $ENV{CLEARCASE_VIEWDRIVE} = $ENV{VD} = $drive;
     if ($mounted && !$opt{persistent}) {
 	my $rc = Argv->new($child)->system;
-	Argv->new(qw(net use), $drive, '/delete')->system;
+	my $netuse = Argv->new(qw(net use), $drive, '/delete');
+	$netuse->stdout(0) if $opt{'exec'};
+	$netuse->system;
 	exit $rc;
     } else {
 	Argv->new($child)->exec;
@@ -1317,14 +1356,14 @@ sub setview {
 
 =item * SETCS
 
-Adds a B<-clone> which lets you specify another view from which to copy
+Adds a B<-clone> flag which lets you specify another view from which to copy
 the config spec.
 
 Adds a B<-sync> flag. This is similar to B<-current> except that it
 analyzes the view dependencies and only flushes the view cache if the
-compiled_spec is out of date with respect to the I<config_spec> source
-file or a file it includes. In other words: B<-sync> is to B<-curr> as
-C<make foo.o> is to C<cc -c foo.c>.
+I<compiled_spec> file is out of date with respect to the I<config_spec>
+source file or any file it includes. In other words: B<-sync> is to
+B<-curr> as C<make foo.o> is to C<cc -c foo.c>.
 
 Adds a B<-expand> flag, which "flattens out" the config spec by
 inlining the contents of any include files.
@@ -1336,7 +1375,7 @@ sub setcs {
     GetOptions(\%opt, qw(clone=s expand sync));
     die Msg('E', "-expand and -sync are mutually exclusive")
 					    if $opt{expand} && $opt{sync};
-    my $tag = ViewTag() if $opt{expand} || $opt{sync} || $opt{clone};
+    my $tag = ViewTag(@ARGV) if $opt{expand} || $opt{sync} || $opt{clone};
     if ($opt{expand}) {
 	my $ct = Argv->new([$^X, '-S', $0]);
 	my $settmp = ".$prog.setcs.$$";
@@ -1422,7 +1461,8 @@ sub workon {
     push(@sv_argv, '-exec', $vwcmd, $tag);
     # Prevent \'s from getting lost in subsequent interpolation.
     for (@sv_argv) { s%\\%/%g }
-    # Hack - assume presence of $ENV{_} means we came from a UNIX-style shell
+    # Hack - assume presence of $ENV{_} means we came from a UNIX-style
+    # shell (e.g. MKS on Windows) so set quoting accordingly.
     my $cmd_exe = (MSWIN && !$ENV{_});
     Argv->new($^X, '-S', $0, 'setview', @sv_argv)->autoquote($cmd_exe)->exec;
 }
@@ -1476,7 +1516,7 @@ sub _inview {
     # Exec the default shell or the value of the -_exec flag.
     if (! $opt{_exec}) {
 	if (MSWIN) {
-	    $opt{_exec} = $ENV{SHELL} || $ENV{ComSpec}
+	    $opt{_exec} = $ENV{SHELL} || $ENV{ComSpec} || $ENV{COMSPEC}
 				|| (-x '/bin/sh.exe' ? '/bin/sh' : 'cmd');
 	} else {
 	    $opt{_exec} = $ENV{SHELL} || (-x '/bin/sh' ? '/bin/sh' : 'sh');
@@ -1491,8 +1531,6 @@ Extended to accept (and ignore) the standard comment flags for
 consistency with other cleartool cmds.
 
 Extended to handle the -dir/-rec/-all/-avobs flags.
-
-An unadorned I<unco> is "promoted" to I<unco -dir> to save typing.
 
 =cut
 
@@ -1717,11 +1755,12 @@ Various degrees of configurability are supported:
 =item * Global Enhancements and Extensions
 
 To add a global override for 'cleartool xxx', simply define a
-subroutine 'xxx' after the __END__ token and re-run 'make install'.
-When doing so it's a good idea to document it in POD format right above
-the sub and make the appropriate addition to the "Usage Message
-Extensions" section.  Also, if the command has an abbreviation (e.g.
-checkout/co) you should add that to the "Command Aliases" section.
+subroutine 'xxx' after the __END__ token in Wrapper.pm or in
+lib/ClearCase/Wrapper/Site.pm and re-run 'make install'.  When doing
+so it's a good idea to document it in POD format right above the sub
+and make the appropriate addition to the "Usage Message Extensions"
+section.  Also, if the command has an abbreviation (e.g.  checkout/co)
+you should add that to the "Command Aliases" section.
 
 This override subroutine is called with @ARGV as its parameter list (and
 @ARGV is also available directly of course). The sub can do whatever it
@@ -1756,7 +1795,7 @@ EV.
 =item * CLEARCASE_WRAPPER_NATIVE
 
 This environment variable may be set to suppress all extensions,
-causing the wrapper to behave just like an alias to cleartool (except
+causing the wrapper to behave just like an alias to cleartool (but
 slower).
 
 =back
@@ -1764,8 +1803,8 @@ slower).
 =head1 DIAGNOSTICS
 
 The flag B<-/dbg=1> prints all "real" cleartool operations executed
-by the wrapper to stderr, while B<-/dbg=2> shows the output of those
-commands as well.
+by the wrapper to stderr as long as the extension in use was coded
+with ClearCase::Argv, which is the case for all supplied extensions.
 
 =head1 INSTALLATION
 
@@ -1773,8 +1812,8 @@ I recommend you install the I<cleartool.plx> file to some global dir
 (e.g. /usr/local/bin), then symlink it to I<ct> or whatever short name
 you prefer.  Unfortunately, there's no equivalent mechanism for
 wrapping GUI access to clearcase. For Windows the strategy is similar
-but requires a "ct.bat" file instead of a symlink. See "ct.bat.sample"
-in the distribution.
+but requires a "ct.bat" redirector instead of a symlink. See
+"ct.bat.sample" in the distribution.
 
 To install or update a global enhancement you must re-run "make
 install".  Also, don't forget to check that the contents of
@@ -1789,4 +1828,5 @@ redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut
 
-## Please put enhancement code above the CONFIGURATION POD.
+## Please put enhancement code above the CONFIGURATION POD section.
+## Alphabetical order is the standard.

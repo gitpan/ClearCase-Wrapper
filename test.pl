@@ -16,5 +16,11 @@ print "ok 1\n";
 ### any specific functionality delivered after the __END__ token is provided
 ### as an example only and I specifically do not want to test it here.
 
-system $^X, qw(-w -Mblib ./cleartool.plx pwv);
-print $? ? "not ok 2\n" : "ok 2\n";
+if (`cleartool pwd -h`) {
+    system $^X, qw(-w -Mblib ./cleartool.plx pwv);
+    print $? ? "not ok 2\n" : "ok 2\n";
+} else {
+    print "Warning: no cleartool command found, test skipped\n";
+    print "ok 2\n";
+    exit 0;
+}
