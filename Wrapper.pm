@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.06';
+$VERSION = '1.07';
 
 require 5.006;
 
@@ -140,7 +140,7 @@ $Packages{'ClearCase::Wrapper'} = __FILE__;
 use strict;
 
 # Piggyback on the -ver flag to show our version too.
-if ($ARGV[0] =~ /^-ver/i) {
+if (@ARGV && $ARGV[0] =~ /^-ver/i) {
     my $fmt = "*%-32s %s (%s)\n";
     local $| = 1;
     for (keys %Packages) {
@@ -224,7 +224,8 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    $checkin	= "\n* [-dir|-rec|-all|-avobs] [-ok] [-diff [diff-opts]] [-revert]";
    $checkout	= "\n* [-dir|-rec] [-ok]";
    $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
-   $lsprivate	= "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
+   $lsprivate	= "\n* [-dir|-rec|-all] [-ecl/ipsed] [-type d|f]
+* [-rel/ative] [-ext] [pname]";
    $lsview	= "\n* [-me]";
    $mkelem	= "\n* [-dir|-rec] [-do] [-ok]";
    $uncheckout	= " * [-nc]";
@@ -685,7 +686,7 @@ sub checkin {
 
 Extended to handle the B<-dir/-rec> flags. NOTE: the B<-all/-avobs>
 flags are disallowed for checkout. Also, directories are not checked
-out automatically.
+out automatically with B<-dir/-rec>.
 
 =cut
 
@@ -841,8 +842,7 @@ directory to be specified such that 'ct lsprivate .' restricts output
 to the cwd. This directory arg may be used in combination with B<-dir>
 etc.
 
-Output is relative to the current or specified directory if the
-B<-rel/ative> flag is used.
+The B<-eclipsed> flag restricts output to eclipsed elements.
 
 The flag B<-type d|f> is also supported with the usual semantics (see
 cleartool find).
@@ -850,17 +850,20 @@ cleartool find).
 The flag B<-visible> flag ignores files not currently visible in the
 view.
 
+Output is relative to the current or specified directory if the
+B<-rel/ative> flag is used.
+
 The B<-ext> flag sorts the output by extension.
 
 =cut
 
 sub lsprivate {
     my %opt;
-    GetOptions(\%opt, qw(directory recurse all avobs
+    GetOptions(\%opt, qw(directory recurse all avobs eclipsed
 						ext relative type=s visible));
 
     my $lsp = ClearCase::Argv->new(@ARGV);
-    $lsp->parse(qw(co|do|other|short|long tag=s invob=s));
+    $lsp->parse(qw(short co|do|other|long tag=s invob=s));
 
     my $pname = '.';
 
@@ -896,7 +899,26 @@ sub lsprivate {
 	}
 	chomp(my @privs = sort $lsp->qx);
 	exit $? if $? || !@privs;
-	my @results = @privs;
+	# Strip out all results which are not eclipsed. An element
+	# is eclipsed if (a) there's a view-private copy,
+	# (b) there's also a versioned copy, and (c) it's not checked out.
+	if ($opt{eclipsed}) {
+	    my %coed = ();
+	    if ($lsp->flag('short')) {
+		%coed = map {chomp; $_ => 1}
+				ClearCase::Argv->lsco(qw(-avo -s -cvi))->qx;
+	    }
+	    my @t_privs;
+	    for (@privs) {
+		next if m%\s\[checkedout\]%;
+		next unless -e "$_@@/main/0";
+		my $sv = $_;
+		$sv =~ s%(/+view)?/$tag%% if $tag;
+		next if exists $coed{$sv};
+		push(@t_privs, $_);
+	    }
+	    @privs = @t_privs;
+	}
 	if ($opt{directory} || $opt{recurse}) {
 	    for (@privs) {
 		if (MSWIN) {
@@ -910,17 +932,17 @@ sub lsprivate {
 	    $job .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
 	    $opt{type} ||= 'e' if $opt{visible};
 	    $job = "grep {-$opt{type}} $job" if $opt{type};
-	    eval qq(\@results = $job \@privs);
-	    exit 0 if !@results;
+	    eval qq(\@privs = $job \@privs);
+	    exit 0 if !@privs;
 	}
 	if ($opt{ext}) {	# sort by extension
 	    require File::Basename;
-	    @results = map  { $_->[0] }
+	    @privs = map  { $_->[0] }
 	       sort { "$a->[1]$a->[2]$a->[3]" cmp "$b->[1]$b->[2]$b->[3]" }
 	       map  { [$_, (File::Basename::fileparse($_, '\.\w+'))[2,0,1]] }
-	       @results;
+	       @privs;
 	}
-	for (@results) { print $_, "\n" }
+	for (@privs) { print $_, "\n" }
 	exit 0;
     }
     $lsp->exec;
@@ -1089,7 +1111,7 @@ Introduces a global convenience/standardization feature: the flag
 B<-me> in the context of a command which takes a B<-tag view-tag>
 causes I<"$LOGNAME"> to be prefixed to the tag name with an
 underscore.  This relies on the fact that even though B<-me> is a
-native cleartool flag, at least through CC4.0 no command which takes
+native cleartool flag, at least through CC5.0 no command which takes
 B<-tag> also takes B<-me> natively. For example:
 
     % <wrapper-context> mkview -me -tag myview ... 
@@ -1139,7 +1161,7 @@ area, if of general use in the former. These may be combined.  For
 instance, imagine XYZ Corporation is a giant international company with
 many sites using ClearCase, and your site is known as R85G. There could
 be a I<ClearCase::Wrapper::XYZ> overlay with enhancements that apply
-anywhere within XYZ and/or a I<ClearCase::Wrapper::Site::R85G> one for
+anywhere within XYZ and/or a I<ClearCase::Wrapper::Site::R85G> for
 your people only. Note that since overlay modules in the Site namespace
 are not expected to be published on CPAN there's no need for XYZ to
 appear in its name; that can be implicit.
@@ -1199,15 +1221,16 @@ with ClearCase::Argv, which is the case for all supplied extensions.
 
 I recommend you install the I<cleartool.plx> file to some global dir
 (e.g. /usr/local/bin), then symlink it to I<ct> or whatever short name
-you prefer.  Unfortunately, there's no equivalent mechanism for
-wrapping GUI access to clearcase. For Windows the strategy is similar
-but requires a "ct.bat" redirector instead of a symlink. See
-"examples/ct.bat" in the distribution.
+you prefer.  For Windows the strategy is similar but requires a
+"ct.bat" redirector instead of a symlink. See "examples/ct.bat" in the
+distribution.  Unfortunately, there's no equivalent mechanism for
+wrapping GUI access to clearcase.
 
-To install or update a global enhancement you must re-run "make
-install".  Also, don't forget to check that the contents of
-C<lib/ClearCase/Wrapper/clearcase_profile> are what you want users to
-have by default.
+To install or update a global enhancement you must run "make pure_all
+install" - at least that's what I've found to work.  Also, don't forget
+to check that the contents of
+C<lib/ClearCase/Wrapper/clearcase_profile> are what you want your users
+to have by default.
 
 =head1 COPYRIGHT AND LICENSE
 
