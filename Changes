@@ -113,3 +113,6 @@ Revision history for Perl extension ClearCase::Wrapper.
 1.07 Tue May  7 12:22:52 EDT 2002
 	- Formatting/doc improvements.
 	- Added 'lsprivate -eclipsed' flag.
+
+1.08 Wed Feb  5 08:44:22 EST 2003
+	- Infrastructure: extended Assert() to take optional messages.

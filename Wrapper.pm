@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.07';
+$VERSION = '1.08';
 
 require 5.006;
 
@@ -371,12 +371,16 @@ sub Msg {
 # Allows the extension writer to make an assertion. If this assertion
 # is untrue, dump the current command's usage msg to stderr and exit.
 sub Assert {
-    my $assertion = shift;
+    my($assertion, @msg) = @_;
     return if $assertion;
     (my $op = (caller(1))[3]) =~ s%.*:%%;
     no strict 'refs';
     my $str = ${$op} || $op;
     my $star = '*' if !Native($op);
+    for (@msg) {
+	chomp;
+	print STDERR Msg('E', $_);
+    }
     print STDERR "Usage: $star$str\n";
     exit 1;
 }
