@@ -1,0 +1,12 @@
+This is basically a "wrapper construction kit" for cleartool. Whereas
+most users make an alias called 'ct' or similar for cleartool, this
+Perl module comes with a wrapper program to which you can give the same
+name. Using the wrapper instead of an alias provides you with a number
+of hooks for catching certain cleartool operations and modifying their
+defaults, implementing whatever pre-op or post-op triggerlike behaviors
+you like (on commands which don't allow actual triggers), or even
+implementing your own cleartool pseudo-commands. The wrapper need not
+be called 'ct'; it can be named whatever you like, even 'cleartool'.
+Note: newer versions may be present at
+<A HREF="http://www.perl.com/CPAN-local/modules/by-module/IPC/DSB/">
+http://www.perl.com/CPAN-local/modules/by-module/IPC/DSB/</A>.

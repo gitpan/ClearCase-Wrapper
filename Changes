@@ -29,3 +29,7 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Only expand symlinks for ci/co cmds.
 	- New $CLEARCASE_WRAPPER_NATIVE EV to suppress all extensions.
 	- New mount extension for Windows.
+
+0.20 Wed Aug  9 13:52:56 EDT 2000
+	- Added mkelem -do flag.
+	- The usual round of bugfixes to sample enhancements.

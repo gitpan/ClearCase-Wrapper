@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '0.18';
+$VERSION = '0.20';
 
 require 5.004;
 
@@ -8,6 +8,11 @@ use constant MSWIN => $^O =~ /MSWin32|Windows_NT/i;
 
 use AutoLoader 'AUTOLOAD';
 use Getopt::Long;
+
+# Technically we should use Getopt::Long::Configure() for these but
+# there's a tangled version history and this is faster anyway.
+$Getopt::Long::passthrough = 1; # required for wrapper programs
+$Getopt::Long::ignorecase = 0;  # global override for dumb default
 
 # Determine where this module was found so we can look there for other files.
 BEGIN { ($libdir = $INC{'ClearCase/Wrapper.pm'}) =~ s%\.pm$%% }
@@ -75,9 +80,9 @@ if (my $me = FirstIndex('-me', @ARGV)) {
 }
 
 # Implements the -M flag (see POD).
-if (my $mflag = FirstIndex('-M', @ARGV)) {
-    splice(@ARGV, $mflag, 1);
-    die Msg('E', "sorry, you're on @*&# Windows") if MSWIN;
+if (my $mflag = FirstIndex('-M', @ARGV) || $ENV{CLEARCASE_WRAPPER_MORE}) {
+    splice(@ARGV, $mflag, 1) if $mflag && !$ENV{CLEARCASE_WRAPPER_MORE};
+    die Msg('E', "sorry, can't do -M on @*&# Windows") if MSWIN;
     pipe(READER, WRITER);
     my $pid;
     if ($pid = fork) {
@@ -94,7 +99,7 @@ if (my $mflag = FirstIndex('-M', @ARGV)) {
 
 # Turn symbolic links into their targets so CC will "do the right thing".
 # But only for checkin/checkout so we don't break e.g. rmname.
-if ($ARGV[0] =~ /^(?:ci|co|check)/) {
+if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
     for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 }
 
@@ -109,10 +114,10 @@ if ($ARGV[0] =~ /^(?:ci|co|check)/) {
    $catcs	= "\n* [-cmnt|-expand|-sources|-start]";
    $checkin	= "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
    $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
-   $lock	= "\n* [-allow login-name[,...] [-deny login-name[,...]";
+   $lock	= "\n* [-allow|-deny login-name[,...]] [-iflocked]";
    $lsprivate	= "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
    $lsview	= "* [-me]";
-   $mkelem	= "\n* [-dir|-rec]";
+   $mkelem	= "\n* [-dir|-rec] [-do]";
    $mklabel	= "\n* [-up]";
    $mkview	= "\n* [-me] [-clone] [-local]";
    $setcs	= "\n\t     * [-clone view-tag] [-expand] [-sync]";
@@ -141,6 +146,7 @@ if ($ARGV[0] =~ /^(?:ci|co|check)/) {
 *unco		= \&uncheckout;
 *mkbrtype	= \&mklbtype;	# not synonyms but the code's the same
 *edcmnt		= \&comment;
+*vi		= \&edit;
 
 #############################################################################
 # Allow per-user configurability. Give the individual access to @ARGV just
@@ -159,9 +165,12 @@ sub man {
     my $page = pop @ARGV;
     ClearCase::Argv->man($page)->system unless $page eq $prog;
     if (defined $ClearCase::Wrapper::{$page} || $page eq $prog) {
+	require File::Basename;
 	# This EV hack causes perldoc to search for the right keyword (!)
 	$ENV{PERLDOC_PAGER} ||= 'more +/' . uc($page)
 		if !MSWIN && defined($ClearCase::Wrapper::{$page});
+	my $psep = MSWIN ? ';' : ':';
+	$ENV{PATH} = join($psep, File::Basename::dirname($^X), $ENV{PATH});
 	Argv->perldoc(__PACKAGE__)->exec;
     }
     exit $?;
@@ -277,8 +286,11 @@ sub ShowFound {
 # the -dir/-rec/-all/-avobs flags. Passes the supplied
 # args to lsco, returns the result.
 sub AutoCheckedOut {
+    return () unless @_;
     my @args = @_;
-    return @args unless @args && grep /^-(?:dir|rec|all|avo)/, @args;
+    my @auto = grep /^-(?:dir|rec|all|avo)/, @args;
+    return @args unless @auto;
+    die Msg('E', "mutually exclusive flags: @auto") if @auto > 1;
     my $lsco = ClearCase::Argv->new('lsco', [qw(-cvi -s)],
 						    grep !/^-(d|cvi)/, @args);
     $lsco->stderr(0) if grep !/^-/, @args; # in case v-p files are listed
@@ -409,8 +421,10 @@ sub checkin {
     my $diff = $ci->clone->prog('diff');
     $diff->optsDIFF(qw(-pred -serial), $diff->optsDIFF);
 
-    # In case ~/.clearcase_profile makes ci -nc the default
-    $ci->opts('-cqe', $ci->opts) if !grep /^-c|^-nc$/, $ci->opts;
+    # In case ~/.clearcase_profile makes ci -nc the default, make sure
+    # we prompt for a comment - unless checking in dirs only.
+    $ci->opts('-cqe', $ci->opts)
+			if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
 
     $diff->stdout(0) if !$opt{diff};  # if -revert we only care about retcode
     for $elem (@elems) {
@@ -433,6 +447,8 @@ For each ClearCase object specified, dump the current comment into a
 temp file, allow the user to edit it with his/her favorite editor, then
 change the objects's comment to the results of the edit. The B<-new>
 flag causes it to ignore the previous comment.
+
+See B<edattr> for editor selection rules.
 
 =cut
 
@@ -529,6 +545,10 @@ because as of CC 3.2 the Unix GUI doesn't support modification of
 attributes and the quoting rules make it difficult to use the
 command line.
 
+THe environment variables WINEDITOR, VISUAL, and EDITOR are checked
+in that order for editor names. If none of the above are set, the
+default editor used is vi on UNIX and notepad on Windows.
+
 =cut
 
 sub edattr {
@@ -584,6 +604,11 @@ sub edattr {
 		    }
 		    next if $?;
 		}
+		# Deal with broken quoting on &^&@# Windows.
+		if (MSWIN && $newval =~ /^"(.*)"$/) {
+		    $newval = qq("\\"$1\\"");
+		}
+		# Make the new attr value.
 		if (defined($oldval)) {
 		    $retstat++ if $ct->mkattr([qw(-rep -c)],
 			 "(Was: $oldval)", $attr, $newval, $obj)->system;
@@ -689,16 +714,20 @@ sub grep {
 
 =item * LOCK
 
-New B<-allow> and B<-deny> flags. These work like B<-nuser> but operate
-incrementally on an existing B<-nuser> list rather than completely
-replacing it. When B<-allow> or B<-deny> are used, B<-replace> is
+New B<-allow> and B<-deny> flags. These work like I<-nuser> but operate
+incrementally on an existing I<-nuser> list rather than completely
+replacing it. When B<-allow> or B<-deny> are used, I<-replace> is
 implied.
+
+When B<-iflocked> is used, no lock will be created where one didn't
+previously exist; the I<-nusers> list will only be modified for
+existing locks.
 
 =cut
 
 sub lock {
     my %opt;
-    GetOptions(\%opt, qw(allow=s deny=s));
+    GetOptions(\%opt, qw(allow=s deny=s iflocked));
     return 0 unless %opt;
     my $lock = ClearCase::Argv->new(@ARGV);
     $lock->parse(qw(c|cfile=s c|cquery|cqeach nusers=s
@@ -707,7 +736,8 @@ sub lock {
 					if $lock->flag('nusers');
     die Msg('E', "cannot use -allow or -deny with multiple objects")
 					if $lock->args > 1;
-    my($currlock) = ClearCase::Argv->lslock([qw(-fmt %c)], $lock->args)->qx;
+    my $lslock = ClearCase::Argv->lslock([qw(-fmt %c)], $lock->args);
+    my($currlock) = $lslock->autofail(1)->qx;
     if ($currlock && $currlock =~ m%^Locked except for users:\s+(.*)%) {
 	my %nusers = map {$_ => 1} split /\s+/, $1;
 	if ($opt{allow}) {
@@ -718,11 +748,13 @@ sub lock {
 	}
 	$lock->opts($lock->opts, '-nusers', join(',', sort keys %nusers))
 								    if %nusers;
+    } elsif (!$currlock && $opt{iflocked}) {
+	exit 0;
     } elsif ($opt{allow}) {
 	$lock->opts($lock->opts, '-nusers', $opt{allow});
     }
     $lock->opts($lock->opts, '-replace') unless $lock->flag('replace');
-    $lock->dbglevel(1)->exec;
+    $lock->exec;
 }
 
 =item * LSPRIVATE
@@ -845,21 +877,27 @@ automatic directory checkout is only enabled when the candidate list is
 derived via the B<-dir/-rec> flags>.  If the B<-ci> flag is present,
 any directories automatically checked out are checked back in too.
 
+By default, only regular view-private files are considered by
+I<-dir|-rec>.  The I<-do> flag causes derived objects to be made into
+elements as well.
+
 =cut
 
 sub mkelem {
     my %opt;
-    GetOptions(\%opt, qw(directory recurse all avobs));
+    GetOptions(\%opt, qw(directory recurse all avobs do));
     die Msg('E', "-all|-avobs flags not supported for mkelem")
 					if $opt{all} || $opt{avobs};
     return unless $opt{directory} || $opt{recurse};
 
     # Derive the list of view-private files to work on.
     my $scope = $opt{recurse} ? '-rec' : '-dir';
-    my @vps = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -other), $scope])->qx;
-    # Certain files we don't ever want to put under version control...
-    @vps = grep !/\b(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)/, @vps;
+    my $lsp = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -oth), $scope]);
+    $lsp->opts($lsp->opts, '-do') if $opt{'do'};
+    my @vps = $lsp->qx;
     chomp(@vps);
+    # Certain files we don't ever want to put under version control...
+    @vps = grep !/(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)$/, @vps;
     ShowFound(@vps);
     exit 0 unless @vps;
 
@@ -912,7 +950,7 @@ sub mkelem {
     }
 
     # Now we've made all the directories, do the files in one fell swoop.
-    $ct->argv(@ARGV)->system;
+    $ct->argv(@ARGV)->system if grep -f, @ARGV;
 
     # Last - if the -ci flag was supplied, check the dirs back in.
     $ct->ci(['-nc'], keys %dirs)->exec if %dirs && grep /^-ci$/, @ARGV;
@@ -1206,11 +1244,16 @@ UNIX setview functionality is left alone.
 =cut
 
 sub setview {
+    # Clean up whatever EV's we might have used to communicate from
+    # parent (pre-setview) to child (in-setview) processes.
     $ENV{CLEARCASE_PROFILE} = $ENV{_CLEARCASE_WRAPPER_PROFILE}
 				if defined($ENV{_CLEARCASE_WRAPPER_PROFILE});
     delete $ENV{_CLEARCASE_WRAPPER_PROFILE};
     delete $ENV{_CLEARCASE_PROFILE};
+    for (grep /^(CLEARCASE_)?ARGV_/, keys %ENV) { delete $ENV{$_} }
+
     return 0 if !MSWIN;
+
     my %opt;
     GetOptions(\%opt, qw(exec=s drive=s login ndrive persistent));
     my $child = $opt{'exec'};
@@ -1345,13 +1388,11 @@ required for builds within the setview may be set here.
 
 sub workon {
     shift @ARGV;	# get rid of pseudo-cmd
-    my(%sv_opt, @sv_argv);
+    my(%opt, @sv_argv);
     # Strip flags intended for 'setview' out of @ARGV, hold them in @sv_argv.
-    {
-	GetOptions(\%sv_opt, qw(drive=s exec=s login ndrive persistent));
-	push(@sv_argv, '-drive', $sv_opt{drive}) if $sv_opt{drive};
-	push(@sv_argv, map {"-$_"} grep !/^(drive|exec)/, keys %sv_opt);
-    }
+    GetOptions(\%opt, qw(drive=s exec=s login ndrive persistent));
+    push(@sv_argv, '-drive', $opt{drive}) if $opt{drive};
+    push(@sv_argv, map {"-$_"} grep !/^(drive|exec)/, keys %opt);
     # Now dig the tag out of @ARGV, wherever it might happen to be.
     # Assume it's the last entry in ARGV matching a legal view-tag pattern.
     my $tag;
@@ -1371,7 +1412,9 @@ sub workon {
     }
     # Last, run the setview cmd we've so laboriously constructed.
     unshift(@ARGV, '_inview');
-    push(@ARGV, '-_exec', qq("$sv_opt{'exec'}")) if $sv_opt{'exec'};
+    if ($opt{'exec'}) {
+	push(@ARGV, '-_exec', qq("$opt{'exec'}"));
+    }
     my $vwcmd = "$^X -S $0 @ARGV";
     # This next line is required because 5.004 and 5.6 do something
     # different with quoting on Windows, no idea exactly why or what.
@@ -1388,20 +1431,23 @@ sub workon {
 sub _inview {
     my $tag = (split(m%[/\\]%, $ENV{CLEARCASE_ROOT}))[-1];
     #Argv->new([$^X, '-S', $0, 'setcs'], [qw(-sync -tag), $tag])->system;
+
+    # If -exec foo was passed to workon it'll show up as -_exec foo here.
+    my %opt;
+    GetOptions(\%opt, qw(_exec=s)) if grep /^-_/, @ARGV;
+
     my @cs = Argv->new([$^X, '-S', $0, 'catcs'], [qw(--expand -tag), $tag])->qx;
-    my($iwd, $env, $exe);
+    chomp @cs;
+    my($iwd, $venv, @viewenv_argv);
     for (@cs) {
 	if (/^##:Start:\s+(\S+)/) {
 	    $iwd = $1;
 	} elsif (/^##:ViewEnv:\s+(\S+)/) {
-	    $env = $1;
-	} elsif (/^##:([A-Z]+)=(\S+)/) {
-	    $ENV{$1} = $2;
+	    $venv = $1;
+	} elsif (/^##:([A-Z]+=.+)/) {
+	    push(@viewenv_argv, $1);
 	}
     }
-
-    # If -exec foo was passed to workon it'll show up as -_exec foo here.
-    GetOptions('_exec=s' => \$exe) if grep /^-_/, @ARGV;
 
     # If an initial working dir is supplied cd to it, then check for
     # a viewenv file and require it if so.
@@ -1411,12 +1457,13 @@ sub _inview {
 	require Cwd;
 	Cwd::chdir($iwd) || warn "$iwd: $!\n";
 	my($cli) = grep /^viewenv=/, @ARGV;
-	$env = (split /=/, $cli)[1] if $cli;
-	$env ||= '.viewenv.pl';
-	if (-f $env) {
+	$venv = (split /=/, $cli)[1] if $cli;
+	$venv ||= '.viewenv.pl';
+	if (-f $venv) {
 	    local @ARGV = grep /^\w+=/, @ARGV;
-	    print "+ reading $env ...\n";
-	    eval { require $env };
+	    push(@ARGV, @viewenv_argv) if @viewenv_argv;
+	    print "+ reading $venv ...\n";
+	    eval { require $venv };
 	    warn Msg('W', $@) if $@;
 	}
     }
@@ -1427,15 +1474,15 @@ sub _inview {
     for (grep /^(CLEARCASE_)?ARGV_/, keys %ENV) { delete $ENV{$_} }
 
     # Exec the default shell or the value of the -_exec flag.
-    if (! $exe) {
+    if (! $opt{_exec}) {
 	if (MSWIN) {
-	    $exe = $ENV{SHELL} || $ENV{ComSpec}
+	    $opt{_exec} = $ENV{SHELL} || $ENV{ComSpec}
 				|| (-x '/bin/sh.exe' ? '/bin/sh' : 'cmd');
 	} else {
-	    $exe = $ENV{SHELL} || (-x '/bin/sh' ? '/bin/sh' : 'sh');
+	    $opt{_exec} = $ENV{SHELL} || (-x '/bin/sh' ? '/bin/sh' : 'sh');
 	}
     }
-    Argv->new($exe)->exec;
+    Argv->new($opt{_exec})->exec;
 }
 
 =item * UNCO
@@ -1444,6 +1491,8 @@ Extended to accept (and ignore) the standard comment flags for
 consistency with other cleartool cmds.
 
 Extended to handle the -dir/-rec/-all/-avobs flags.
+
+An unadorned I<unco> is "promoted" to I<unco -dir> to save typing.
 
 =cut
 
@@ -1547,7 +1596,7 @@ sub winkout {
 	    @list = <LIST>;
 	    close(LIST);
 	} else {
-	    my @type = $opt{do} ? qw(-other -do) : qw(-other);
+	    my @type = $opt{'do'} ? qw(-other -do) : qw(-other);
 	    @list = Argv->new([$^X, '-S', $0, 'lsp'],
 		    ['-s', @type, "-$scope[0]"])->qx;
 	}

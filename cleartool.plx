@@ -1,22 +1,30 @@
 #!/usr/local/bin/perl -w
 
 # The bulk of the code comes from here ...
-use ClearCase::Wrapper;
+BEGIN {
+    require ClearCase::Wrapper if !$ENV{CLEARCASE_WRAPPER_NATIVE};
+}
 
 use strict;
-
-# Technically we should use Getopt::Long::Configure() to set these but
-# there's a tangled version history involved and this way is faster anyway.
-local $Getopt::Long::passthrough = 1; # required for wrapper programs
-local $Getopt::Long::ignorecase = 0;  # global override for dumb default
 
 # If Wrapper.pm defines an AutoLoad-ed subroutine to handle $ARGV[0], call it.
 # That subroutine may or may not return.
 if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 	    (defined($ClearCase::Wrapper::{$ARGV[0]}) || $ARGV[0] eq 'help')) {
+    # This provides support for writing extensions.
     require ClearCase::Argv;
     ClearCase::Argv->inpathnorm(0);	# unset an unfortunate default
     ClearCase::Argv->attropts;		# this is what parses -/dbg=1 et al
+    {
+	# "Import" these interfaces in case they're wanted.
+	# Doubled up to suppress a spurious warning.
+	*ClearCase::Wrapper::ctsystem = \&ClearCase::Argv::ctsystem;
+	*ClearCase::Wrapper::ctsystem = \&ClearCase::Argv::ctsystem;
+	*ClearCase::Wrapper::ctexec = \&ClearCase::Argv::ctexec;
+	*ClearCase::Wrapper::ctexec = \&ClearCase::Argv::ctexec;
+	*ClearCase::Wrapper::ctqx = \&ClearCase::Argv::ctqx;
+	*ClearCase::Wrapper::ctqx = \&ClearCase::Argv::ctqx;
+    }
     my $cmd = "ClearCase::Wrapper::$ARGV[0]";
     no strict 'refs';
     # This block handles "ct <cmd> -help" and "ct help <cmd>".
@@ -60,9 +68,8 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
     if (grep !m%^-/%, @ARGV) {
 	require ClearCase::Argv;
-	ClearCase::Argv->inpathnorm(0);
 	ClearCase::Argv->attropts;
-	ClearCase::Argv->new(@ARGV)->exec;
+	ClearCase::Argv->new(@ARGV)->inpathnorm(0)->exec;
     } else {
 	exit system 'cleartool';
     }
