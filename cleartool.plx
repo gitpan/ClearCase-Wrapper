@@ -50,10 +50,14 @@ if (@ARGV && defined $ClearCase::Wrapper::{$ARGV[0]}) {
 # order to not unduly slow down a command we aren't overriding anyway,
 # skip all that overhead and just exec.
 if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
-    require ClearCase::Argv;
-    ClearCase::Argv->inpathnorm(0);
-    ClearCase::Argv->attropts;
-    ClearCase::Argv->new(@ARGV)->exec;
+    if (grep !m%^-/%, @ARGV) {
+	require ClearCase::Argv;
+	ClearCase::Argv->inpathnorm(0);
+	ClearCase::Argv->attropts;
+	ClearCase::Argv->new(@ARGV)->exec;
+    } else {
+	exit system 'cleartool';
+    }
 } else {
     die "Error: no ClearCase on this system!\n" unless -d '/usr/atria';
     exec('/usr/atria/bin/cleartool', @ARGV) && exit $?;

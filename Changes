@@ -18,3 +18,8 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Added 'lock -{allow,deny} flags.
 	- Fixed spurious warnings going into interactive mode.
 	- Added default for 'ct ci'.
+
+0.17 Tue Jul  4 22:52:08 EDT 2000
+	- Reworked setview/workon implementation.
+	- Improvements to winkout.
+	- Various bugfixes in sample enhancements.

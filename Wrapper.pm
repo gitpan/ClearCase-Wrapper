@@ -28,15 +28,15 @@ BEGIN {
     }
 }
 
-$VERSION = '0.16';
+$VERSION = '0.17';
 
 use strict;
 
-use vars qw($prog $libdir);
+use vars qw($prog $libdir @Admins);
 $prog = $ENV{CLEARCASE_WRAPPER_PROG} || (split m%[/\\]+%, $0)[-1];
 
 # A list of users who are exempt from certain restrictions.
-my @Admins = qw(vobadm);
+@Admins = qw(vobadm);
 
 # Override the user's preferences while interacting with clearcase.
 umask 002 if !grep(/^$ENV{LOGNAME}$/, @Admins);
@@ -347,8 +347,8 @@ Since checkin is such a common operation, an unadorned I<ci> is
 =cut
 
 sub checkin {
-    # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -all'.
-    push(@ARGV, qw(-diff -revert -all)) if @ARGV == 1;
+    # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -dir'.
+    push(@ARGV, qw(-diff -revert -dir)) if @ARGV == 1;
 
     my %opt;
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
@@ -458,8 +458,8 @@ the diff take place against the I<n>'th predecessor.
 =cut
 
 sub diff {
-    # Allows 'ct diff' to be shorthand for 'ct diff -all'.
-    push(@ARGV, qw(-all)) if @ARGV == 1;
+    # Allows 'ct diff' to be shorthand for 'ct diff -dir'.
+    push(@ARGV, qw(-dir)) if @ARGV == 1;
 
     my $limit = 0;
     if (my @num = grep /^-\d+$/, @ARGV) {
@@ -604,8 +604,8 @@ scope. Example: I<"ct edit -all">.
 =cut
 
 sub edit {
-    # Allows 'ct edit' to be shorthand for 'ct edit -all'.
-    push(@ARGV, qw(-all)) if @ARGV == 1;
+    # Allows 'ct edit' to be shorthand for 'ct edit -dir'.
+    push(@ARGV, qw(-dir)) if @ARGV == 1;
     my %opt;
     # -c999 isn't a real flag, it's there to disambiguate -c vs -ci
     GetOptions(\%opt, qw(ci c999)) if grep /^-ci$/, @ARGV;
@@ -676,9 +676,8 @@ sub lock {
 					if $lock->flag('nusers');
     die Msg('E', "cannot use -allow or -deny with multiple objects")
 					if $lock->args > 1;
-    my($lastlock) = grep /^Locked\s/,
-			ClearCase::Argv->lsh([qw(-fmt %c)], $lock->args)->qx;
-    if ($lastlock =~ m%^Locked except for users:\s+(.*)%) {
+    my($currlock) = ClearCase::Argv->lslock([qw(-fmt %c)], $lock->args)->qx;
+    if ($currlock && $currlock =~ m%^Locked except for users:\s+(.*)%) {
 	my %nusers = map {$_ => 1} split /\s+/, $1;
 	if ($opt{allow}) {
 	    for (split /,/, $opt{allow}) { $nusers{$_} = 1 }
@@ -850,7 +849,7 @@ sub mkelem {
 	# Now we know it's an element and needs to be checked out.
 	$dirs{$d}++;
     }
-    $ct->co(['-nc'], keys %dirs)->system;
+    $ct->co(['-nc'], keys %dirs)->system if %dirs;
 
     # Process candidate directories here, then do files below.
     for my $cand (@vps) {
@@ -880,7 +879,7 @@ sub mkelem {
     $ct->argv(@ARGV)->system;
 
     # Last - if the -ci flag was supplied, check the dirs back in.
-    $ct->ci(['-nc'], keys %dirs)->exec if keys %dirs && grep /^-ci$/, @ARGV;
+    $ct->ci(['-nc'], keys %dirs)->exec if %dirs && grep /^-ci$/, @ARGV;
 
     # Done - don't drop back to main program.
     exit $?;
@@ -1045,7 +1044,7 @@ sub mkview {
 	    local(@ARGV) = @ARGV;	# operate on temp argv
 	    my %ignore;
 	    GetOptions(\%ignore, qw(ncaexported|shareable_dos|nshareable_dos
-			tmode|region|ln|host|hpath|gpath|cachesize|stream=s));
+		tcomment|tmode|region|ln|host|hpath|gpath|cachesize|stream=s));
 	    GetOptions(\%opt, q(tag=s));
 	    return if !$opt{tag};
 	    if ($opt{tag} && ($#ARGV == 0) && @vwsmap) {
@@ -1060,10 +1059,11 @@ sub mkview {
 	if ($opt{tag}) {
 	    # Policy: view-storage areas should be in a std place.
 	    if (@vwsmap) {
+		require File::Path;
 		my $stgpat = "$ENV{LOGNAME}/$opt{tag}.vws";
 		if ($ARGV[-1] =~ m%$stgpat$%) {
 		    my($vwbase) = ($ARGV[-1] =~ m%(.+)/[^/]+\.vws$%);
-		    mkpath($vwbase, 0, 0755) unless -d $vwbase;
+		    File::Path::mkpath($vwbase, 0, 0755) unless -d $vwbase;
 		} else {
 		    warn Msg("standard view storage path is /vws/.../$stgpat");
 		}
@@ -1105,7 +1105,7 @@ sub mkview {
     # convention the former are prefixed with username, we make
     # the shareability default contingent on that while always
     # allowing a literal flag to win.
-    if (!grep /^-(?:sha|nsh)/, @ARGV) {
+    if (!grep /^-(?:sna|sha|nsh)/, @ARGV) {
 	splice(@ARGV, 1, 0, ($opt{tag} =~ /^$ENV{LOGNAME}_/) ? '-nsh' : '-sha');
     }
 
@@ -1138,28 +1138,33 @@ sub setview {
     return 0 if !MSWIN;
     my %opt;
     GetOptions(\%opt, qw(exec=s drive=s login ndrive persistent));
-    Argv->inpathnorm(0);	# must suppress this for options like /del
+    my $child = $opt{'exec'};
     {
 	# This hack seems necessary to support $(shell ...) in clearmake
 	# under MKS 6.2. Don't know why, something to do with the
 	# typeset -I COMSPEC in environ.ksh?
 	my $comspec = $ENV{ComSpec} || $ENV{COMSPEC};
 	delete $ENV{COMSPEC};
-	($ENV{ComSpec} = $comspec) =~ s%\\%/%g;
+	$ENV{ComSpec} = $comspec;
     }
-    $opt{'exec'} ||= $ENV{SHELL} || $ENV{ComSpec} || 'cmd.exe';
+    if ($ENV{SHELL}) {
+	$child ||= $ENV{SHELL};
+    } else {
+	delete $ENV{LOGNAME};
+    }
+    $child ||= $ENV{ComSpec} || 'cmd.exe';
     my $vtag = $ARGV[-1];
-    my @used = grep /\w:\s+\\\\/, Argv->new(qw(net use))->qx;
-    my @views = grep /\s+\\\\view\\$vtag\b/, grep !/unavailable/i, @used;
-    my @drives = map {/(\w:)/ && uc($1)} @views;
-    my $drive = $opt{drive} ? uc($opt{drive}) : $drives[0];
+    my @net_use = grep /\s[A-Z]:\s/i, Argv->new(qw(net use))->qx;
+    my $drive = $opt{drive} || (map {/(\w:)/ && uc($1)}
+				grep /\s+\\\\view\\$vtag\b/,
+				grep !/unavailable/i, @net_use)[0];
     my $mounted = 0;
     my $pers = $opt{persistent} ? '/persistent:yes' : '/persistent:no';
-    my %taken = map {/(\w:)\s+\\\\view(\S+)/ && uc($1) => $2} @used;
     if (!$drive) {
 	ClearCase::Argv->startview($vtag)->autofail(1)->system
 						    if ! -d "//view/$vtag";
 	$mounted = 1;
+	my %taken = map { /\s([A-Z]:)\s/i; $1 => 1 } @net_use;
 	for (reverse 'G'..'Z') {
 	    $drive = $_ . ':';
 	    if (!$taken{$drive}) {
@@ -1171,25 +1176,24 @@ sub setview {
 	}
     } elsif ($opt{drive}) {
 	$drive .= ':' if $drive !~ /:$/;
-	die Msg('E', "$drive is in use by another view")
-				if $taken{$drive} && $taken{$drive} ne $vtag;
+	$drive = uc($drive);
 	if (! -d $drive) {
 	    $mounted = 1;
 	    local $| = 1;
 	    print "Connecting $drive to \\\\view\\$vtag ... ";
 	    Argv->new(qw(net use), $drive, "\\\\view\\$vtag", $pers)->system;
+	    exit $?>>8 if $?;
 	}
     }
     chdir "$drive/" || die Msg('E', "chdir $drive $!");
     $ENV{CLEARCASE_ROOT} = "\\\\view\\$vtag";
     $ENV{CLEARCASE_VIEWDRIVE} = $ENV{VD} = $drive;
-    delete $ENV{LOGNAME};
     if ($mounted && !$opt{persistent}) {
-	my $rc = Argv->new($opt{'exec'})->system;
+	my $rc = Argv->new($child)->system;
 	Argv->new(qw(net use), $drive, '/delete')->system;
 	exit $rc;
     } else {
-	Argv->new($opt{'exec'})->exec;
+	Argv->new($child)->exec;
     }
 }
 
@@ -1292,22 +1296,33 @@ sub workon {
     # Last, run the setview cmd we've so laboriously constructed.
     unshift(@ARGV, '_inview');
     push(@ARGV, '-_exec', qq("$sv_opt{'exec'}")) if $sv_opt{'exec'};
-    push(@sv_argv, '-exec', "$^X -S $0 @ARGV", $tag);
+    my $vwcmd = "$^X -S $0 @ARGV";
+    # This next line is required because 5.004 and 5.6 do something
+    # different with quoting on Windows, no idea exactly why or what.
+    $vwcmd = qq("$vwcmd") if MSWIN && $] > 5.005;
+    push(@sv_argv, '-exec', $vwcmd, $tag);
     # Prevent \'s from getting lost in subsequent interpolation.
     for (@sv_argv) { s%\\%/%g }
-    # Hack - assume no $SHELL EV means we're on Windows using cmd.exe
-    my $dos_shell = (MSWIN && !$ENV{SHELL});
-    Argv->new($^X, '-S', $0, 'setview', @sv_argv)->autoquote($dos_shell)->exec;
+    # Hack - assume presence of $ENV{_} means we came from a UNIX-style shell
+    my $cmd_exe = (MSWIN && !$ENV{_});
+    Argv->new($^X, '-S', $0, 'setview', @sv_argv)->autoquote($cmd_exe)->exec;
 }
 
 ## undocumented helper function for B<workon>
 sub _inview {
     my $tag = (split(m%[/\\]%, $ENV{CLEARCASE_ROOT}))[-1];
-    Argv->new([$^X, '-S', $0, 'setcs'], [qw(-sync -tag), $tag])->system;
-    my $cs = Argv->new({-autochomp=>1}, [$^X, '-S', $0, 'catcs'],
-						    [qw(--start -tag)], $tag);
-    my $iwd = $cs->opts(qw(--start -tag))->qx;
-    my $exe;
+    #Argv->new([$^X, '-S', $0, 'setcs'], [qw(-sync -tag), $tag])->system;
+    my @cs = Argv->new([$^X, '-S', $0, 'catcs'], [qw(--expand -tag), $tag])->qx;
+    my($iwd, $env, $exe);
+    for (@cs) {
+	if (/^##:Start:\s+(\S+)/) {
+	    $iwd = $1;
+	} elsif (/^##:ViewEnv:\s+(\S+)/) {
+	    $env = $1;
+	} elsif (/^##:([A-Z]+)=(\S+)/) {
+	    $ENV{$1} = $2;
+	}
+    }
 
     # If -exec foo was passed to workon it'll show up as -_exec foo here.
     GetOptions('_exec=s' => \$exe) if grep /^-_/, @ARGV;
@@ -1320,10 +1335,8 @@ sub _inview {
 	require Cwd;
 	Cwd::chdir($iwd) || warn "$iwd: $!\n";
 	my($cli) = grep /^viewenv=/, @ARGV;
-	my $env = (split /=/, $cli)[1] if $cli;
-	$env ||= $cs->opts(qw(--viewenv -tag))->qx;
+	$env = (split /=/, $cli)[1] if $cli;
 	$env ||= '.viewenv.pl';
-	chomp $env;
 	if (-f $env) {
 	    local @ARGV = grep /^\w+=/, @ARGV;
 	    print "+ reading $env ...\n";
@@ -1336,20 +1349,20 @@ sub _inview {
     $ENV{CLEARCASE_MAKE_COMPAT} ||= 'gnu';
 
     for (grep /^(CLEARCASE_)?ARGV_/, keys %ENV) { delete $ENV{$_} }
-    delete $ENV{LOGNAME} if MSWIN;
 
-    # Exec the user's shell or the value of the -_exec flag.
+    # Exec the default shell or the value of the -_exec flag.
     if (! $exe) {
-	$exe = $ENV{SHELL} || (-x '/bin/sh' ? '/bin/sh' : (MSWIN ? 'cmd':'sh'));
-	$exe = 'c:/mksnt/sh' if MSWIN && -x 'c:/mksnt/sh.exe'; # MKS hack
+	if (MSWIN) {
+	    $exe = $ENV{SHELL} || $ENV{ComSpec}
+				|| (-x '/bin/sh.exe' ? '/bin/sh' : 'cmd');
+	} else {
+	    $exe = $ENV{SHELL} || (-x '/bin/sh' ? '/bin/sh' : 'sh');
+	}
     }
     Argv->new($exe)->exec;
 }
 
 =item * UNCO
-
-Modified default to always use -rm (this may be controversial but is
-easily overridden in the user's profile).
 
 Extended to accept (and ignore) the standard comment flags for
 consistency with other cleartool cmds.

@@ -1,6 +1,8 @@
 Changes
 MANIFEST
 Makefile.PL
+OLD/ClearCase-Ct-1.20.tar
+OLD/README
 Wrapper.pm
 cleartool.plx
 ct.bat.sample

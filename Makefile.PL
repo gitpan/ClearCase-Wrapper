@@ -23,8 +23,9 @@ WriteMakefile(
     'VERSION_FROM'	=> 'Wrapper.pm', # finds $VERSION
     'EXE_FILES'		=> [ 'cleartool.plx' ],
     'PREREQ_PM' => {
-	  Getopt::Long	  => 2.17,
-	  ClearCase::Argv => 0.23,
+	  Getopt::Long		=> 2.17,
+	  ClearCase::Argv	=> 0.23,
+	  Argv			=> 0.53,
     },
     'dist' => {
 	  DIST_DEFAULT	=> 'all tardist',
