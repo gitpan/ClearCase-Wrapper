@@ -1,27 +1,26 @@
 #!/usr/local/bin/perl -w
 
-use strict;
-use vars '$prog';
-
-# The bulk of the code comes from ClearCase::Wrapper ...
+# The bulk of the code comes from here ...
 BEGIN {
-    # Helpful when discriminating between Windows and good OSes.
-    use constant MSWIN => $^O =~ /MSWin32|Windows_NT/i ? 1 : 0;
-
-    # Derive the name we were run as and make it available globally for msgs.
-    $prog = $ENV{CLEARCASE_WRAPPER_PROG} || (split m%[/\\]+%, $0)[-1];
-
-    # The "standard" set of overrides supplied with the package.
-    # These are autoloaded and thus fairly cheap to read in
-    # even though there's lots of code inside.
     if (!$ENV{CLEARCASE_WRAPPER_NATIVE}) {
-	eval { require ClearCase::Wrapper; };
-	if ($@) {
-	    (my $msg = $@) =~ s%\s*\(.*%!%;
-	    warn "$prog: Warning: $msg";
-	}
+	# The "standard" set of overrides supplied with the package.
+	# These are autoloaded and thus fairly cheap to 'require'
+	# even though there's lots of code down here ...
+	require ClearCase::Wrapper;
+
+	# A site admin may optionally put local overrides here.
+	# These are not autoloaded due to a limitation of AutoLoader
+	# that more than one file may not contribute to a single
+	# autoloaded package. But upgrades to new ClearCase::Wrapper
+	# versions will be substantially easier if all local tweaking
+	# in this file. A subroutine declared here will eclipse one
+	# of the same name autoloaded above.
+	local $^W = 0;	# in case a sub is redefined in Site.pm
+	require ClearCase::Wrapper::Site;
     }
 }
+
+use strict;
 
 # If Wrapper.pm defines an AutoLoad-ed subroutine to handle $ARGV[0], call it.
 # That subroutine may or may not return.
@@ -29,7 +28,7 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 	    (defined($ClearCase::Wrapper::{$ARGV[0]}) || $ARGV[0] eq 'help')) {
     # This provides support for writing extensions.
     require ClearCase::Argv;
-    ClearCase::Argv->VERSION(1.07);
+    ClearCase::Argv->inpathnorm(0);	# backward compat with Argv<1.03
     ClearCase::Argv->attropts;		# this is what parses -/dbg=1 et al
     {
 	# "Import" these interfaces in case they're wanted.
@@ -84,13 +83,10 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
     if (grep !m%^-/%, @ARGV) {
 	require ClearCase::Argv;
-	ClearCase::Argv->VERSION(1.07);
 	ClearCase::Argv->attropts;
-	# The -ver flag/cmd is a special case - must be exec-ed.
-	exit system('cleartool', @ARGV) if $ARGV[0] =~ /^-ver/i;
-	ClearCase::Argv->new(@ARGV)->exec;
+	ClearCase::Argv->new(@ARGV)->inpathnorm(0)->exec;
     } else {
-	exit system 'cleartool', @ARGV;
+	exit system 'cleartool';
     }
 } else {
     die "Error: no ClearCase on this system!\n" unless -d '/usr/atria';

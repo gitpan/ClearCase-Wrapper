@@ -1,0 +1,6 @@
+This tar file contains an older version known as ClearCase::Ct.
+It's obsolete but is retained here for historical reasons and
+because there were a few features in the old one which I didn't
+bring over into ClearCase::Wrapper; if anybody misses them
+and wants to add them to the new version, here's the old code
+to work from.

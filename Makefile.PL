@@ -1,19 +1,4 @@
 use ExtUtils::MakeMaker;
-use File::Basename;
-use File::Find;
-
-# The upgrade from 0.25 to 1.00 is cleaner if the old version is uninstalled.
-# Try to catch that situation here.
-my $cnt = 0;
-sub wanted {
-    return unless /^Burrow.al$/;
-    my $d = dirname($File::Find::name);
-    return unless $d =~ /Wrapper/;
-    return if $cnt++;
-    warn qq(Warning: found old version in $d/....
-Remove before 'make install' - see README.upgrade for details.\n);
-}
-find(\&wanted, @INC);
 
 # Explain a little background at install time.
 print q(
@@ -29,24 +14,19 @@ print q(
 	@echo off
 	perl //UNC/path/to/cleartool.plx %*
 
-*NOTE*  Consider installing ClearCase::Wrapper::DSB too.
-*NOTE*  As of version 1.00, much of the functionality previously
-*NOTE*  in this module has been moved to ClearCase::Wrapper::DSB.
-*NOTE*  Many of my favorite extensions are now there.
-
 );
 
-# The regular stuff.
+# See lib/ExtUtils/MakeMaker.pm for details of how to influence
+# the contents of the Makefile.
 WriteMakefile(
     'NAME'		=> 'ClearCase::Wrapper',
     'VERSION_FROM'	=> 'Wrapper.pm', # finds $VERSION
     'EXE_FILES'		=> [ 'cleartool.plx' ],
     'PREREQ_PM' => {
-	  File::Spec			=> 0.82,
-	  Getopt::Long			=> 2.17,
-	  ClearCase::Argv		=> 1.06,
-	  Argv				=> 1.06,
-	  ClearCase::ClearPrompt	=> 1.24,
+	  File::Spec		=> 0.82,
+	  Getopt::Long		=> 2.17,
+	  ClearCase::Argv	=> 0.23,
+	  Argv			=> 0.53,
     },
     'dist' => {
 	  DIST_DEFAULT	=> 'all tardist',

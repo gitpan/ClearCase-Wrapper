@@ -2,26 +2,30 @@
 			ClearCase::Wrapper
 ========================================================================
 
-Copyright (c) 1997-2002 David Boyce (dsb@boyski.com). All rights
-reserved.  This program is free software; you can redistribute it
-and/or modify it under the same terms as Perl itself.
+Copyright (c) 1997,1998,1999,2000 David Boyce (dsb@boyski.com). All
+rights reserved.  This program is free software; you can redistribute
+it and/or modify it under the same terms as Perl itself.
 
 ************************************************************************
 Note: this module is of use only to users of the ClearCase command-line
 interface tool 'cleartool', on Unix or NT systems.
 ************************************************************************
 
+Even if you don't read README files - and you should - please read the
+section entitled "SAMPLE ENHANCEMENTS" at the very least! But please read
+the whole thing. Sorry it's so long.
+
 DESCRIPTION/BACKGROUND
 ----------------------
 
 This module has grown well beyond its initial design, which was
-inspired by three simple observations:
+initially inspired by three simple observations:
 
    1. The configurability of cleartool, as represented by
-   ~/.clearcase_profile, is badly limited. The only thing this file
-   affects is the default comment behavior!
+   ~/.clearcase_profile, is badly limited. The only thing it can
+   affect is the default comment behavior!
 
-   2. Triggers are useful but only apply to vob-object operations;
+   2. Triggers are quite useful but only apply to vob-object operations;
    commands like mkview, catcs, etc are non-triggerable and must be
    customized in a wrapper script.
 
@@ -62,58 +66,57 @@ about Perl, but it also removes an upper bound on what can be done.
 Once you set Perl loose on the command line you can do just about
 anything with it, as the supplied sample enhancements may demonstrate.
 
-ENHANCEMENTS
+SAMPLE ENHANCEMENTS
 --------------
 
-The interesting files in this distribution are cleartool.plx and
-Wrapper.pm.  The first is the actual cleartool wrapper program; it's
-short, generic, and should need no local modification.  Wrapper.pm
-provides some funky importing infrastructure above the __END__ token;
-again, this is boilerplate. All the interesting stuff - the ClearCase
-customizations - are made in the AutoLoader area below the __END__.
+The interesting files in this distribution are cleartool.plx,
+Wrapper.pm, and Site.pm.  The first is the cleartool wrapper program;
+it's short and generic and should need no local modification.
+Wrapper.pm provides some similarly boilerplate infrastructure above the
+__END__ token; all customizations are made in the AutoSplit area below
+the __END__.
 
-It is not recommended that you modify either of these files for your
-own customizations. Rather, a provision is made for "overlay modules"
-which let you overlay your own semantics. A sample overlay module is
-provided in the ./examples directory along with its own README.
+The Site.pm file provides an optional location for site-specific
+enhancements. This file is not autoloaded due to a limitation of
+AutoLoader. Thus a site admin wanting to tweak this module has two
+options: (1) make the changes in the AutoSplit area of Wrapper.pm where
+they'll get the benefit of autoloading, but you'll have to merge your
+changes with mine when updating the module. Or (2) make changes in
+Site.pm; subroutines defined there are used directly without benefit
+of autoloading but in return it will be much easier to maintain since
+I provide only a stub Site.pm.
 
-In theory, as described above, ClearCase::Wrapper per se is just a
-framework for making your own enhancements. By that logic it should
-be delivered without any customizations. In other words, it should
-provide only mechanism and let you provide the policy.
+Customizations are supplied in the form of subroutines which will be
+called instead of exec-ing the cleartool command of the same name,
+using the AutoSplit/ AutoLoader features of Perl.
 
-However, I think many of the enhancements I've made are of general
-interest and may be a primary reason for installing the module, so
-here's what I've done. The ones which are (a) widely applicable and (b)
-uncontroversial (e.g. don't change native CC defaults) are provided
-right in ClearCase::Wrapper. The ones of perhaps less general
-use have been segregated into the overlay ClearCase::Wrapper::DSB,
-which is also available on CPAN. Those which are site-specific and/or
-modify CC defaults, or are controversial in any other way, are in a
-site-specific overlay which is not released.
+The AutoSplit area of Wrapper.pm *should* be delivered empty since I
+can't predict what customizations you may prefer. But in fact I've
+placed some of my more generally useful customizations there for
+pedagogical purposes. I spent a lot of time trying to decide whether to
+deliver these in place or to bury them in a README or a
+SAMPLE_ENHANCEMENTS file; on the one hand, moving them aside would
+complicate the install process and some percentage of users (the ones
+who don't read README files!) would never find them. On the other hand,
+once they're delivered in-place, no amount of protestation will
+convince some people that they're not part of the "product" per se. In
+the end I decided on the latter strategy but will say this loudly in
+hopes of it being heard:
 
-THEREFORE: to get the full scope of functionality, with all published
-enhancements, you should install BOTH ClearCase::Wrapper and
-ClearCase::Wrapper::DSB. At some point there may even be other overlays
-available; check their docs before installing.
+ANYTHING IN WRAPPER.PM AFTER THE "=head1 CLEARTOOL ENHANCEMENTS" LINE
+IS A **SAMPLE**.  IT IS **YOURS** TO CONFIGURE, ADD TO, OR SUBTRACT
+FROM AS YOU WISH. WHILE I PLAN TO SUPPORT THE MODULE PER SE, I WILL NOT
+COMMIT TO SUPPORTING THESE SAMPLE ENHANCEMENTS.
 
-Note: older versions of ClearCase::Wrapper, prior to 1.00, had a
-different customization strategy involving a Site.pm file. This is
-obsolete. If you have a customized Site.pm it should continue to work,
-but it would be easy (and much cleaner) to convert it into an overlay
-module. The best way to do this is to copy your subroutines out of Site.pm
-into the sample overlay module ("MySite"). Rename as appropriate,
-test and install, and don't forget to take the obsolete Site.pm
-file out of your @INC area manually.
-
-See the POD for further discussion of how to add your own extensions.
+In fact you could remove everything after said line and the wrapper
+program wouldn't be broken; you'd just lose your customizations. Or
+rather my customizations.
 
 The wrapper script also looks for a file called ~/.clearcase_profile.pl
 (note same name ClearCase supports except with a .pl suffix) containing
 personal customizations. No sample of this is delivered; the syntax is
 pure Perl and the idea would be to modify @ARGV before the override
-subroutine and/or exec() ever see it. I've never found a need for this
-feature, though. See POD for details.
+subroutine and/or exec() ever see it.
 
 
 TYPICAL USES / HIGHLIGHTS OF SUPPLIED FEATURES
@@ -125,19 +128,34 @@ always wished for or even build new pseudo-commands on top of existing
 ones. Following are some examples of each of these as implemented in
 the sample enhancements.
 
--> A number of cleartool commands don't support automated aggregation
-for some reason, so I added it.  Specifically, the provided code
-extends the common cleartool flags -dir/-rec/-all/-avobs to the
-checkin, checkout, unco, diff, lsprivate, and mkelem commands; thus you
-can checkin all checkouts under the current directory with "ct ci
--rec", turn a tree of private files into elements with "ct mkelem -rec
--ci", print out diffs of all current modifications in the view with "ct
-diff -all", etc. This is perhaps the most useful enhancement provided.
+-> A number of cleartool cmds don't support automated aggregation for
+some reason, so I added it.  Specifically, the sample profile extends
+the common cleartool flags -dir/-rec/-all/-avobs to the checkin, unco,
+diff, and mkelem commands; thus you can checkin everything under the
+current directory with "ct ci -rec", turn a tree of private files into
+elements with "ct mkelem -rec -ci", print out diffs of all current
+modifications in the view with "ct diff -all", etc. This is perhaps the
+most useful enhancement provided.
 
--> As an example of building a new command, try out "ct edit". This is
-a simple pseudo-cmd which runs a checkout and then invokes your
-preferred editor on the checked-out file(s). Not rocket science but I
-use it many times a day and it saves a lot of keystrokes.
+-> The "cleartool lsprivate" command always dumps the entire list of
+view-private files; there's no way to limit it to a particular
+subdirectory. But the samples provide an enhancement to recognize the
+-dir/-rec/-all/-avobs flags. Under the covers this is logically
+just:
+
+   cleartool lsp | grep <whatever> | sed <something>
+
+(it's actually implemented in perl of course) but the effect is as if
+cleartool lsprivate truly handled these flags just as lsco does.
+
+-> As an example of building a new command, try out "ct edattr". This
+is handy for modifying attributes, analogous to the "ct edcs" cmd.
+Running "ct edattr foo@@" dumps the attributes of foo and their values
+into a temp file and runs your editor of choice on that file.  When you
+finish editing the file, it modifies any attributes you've modified,
+adds any you've added, removes any you removed, etc.  Types are created
+as required and removed if the removed attribute was the last remaining
+instance.
 
 -> An example of removing a minor irritation: one user complained that
 "cleartool unco" doesn't recognize and ignore comment flags such as
@@ -166,10 +184,9 @@ install a private testing version in your home directory, use:
 which will cause "make install" to copy files into ~/lib/perl5/....
 Then set the environment variable to something like:
 
-   PERL5LIB=$HOME/lib/site_perl/5.6.1
+   PERL5LIB=$HOME/lib/perl5:$HOME/lib/perl5/site_perl
 
-and cleartool.plx should find the local version for as long as that EV
-is in effect.
+and ct should find the local version for as long as that EV is in effect.
 
 Of course, to complete the installation you'll need to put the script
 somewhere on your path, symlink it to a short name such as 'ct', and
@@ -185,12 +202,11 @@ itself and "ct man <cmd>" for documentation of specific customizations.
 DEPENDENCIES
 ------------
 
-As shipped, this module depends on ClearCase::Argv which depends in
-turn on Argv. It has no inherent need for these modules but they're
-very well suited for writing portable enhancements. You need not use
-them in your own enhancements, though it's recommended you do. For
-performance reasons, the code is designed to load them only if and when
-they're used.
+As shipped, this module depends on ClearCase::Argv which depends in turn
+on Argv. It has no inherent need for these modules but they're very well
+suited for writing portable enhancements. You do not need to use them in
+your own enhancements, though. There's code present to load them only
+if and when they're used.
 
 DEBUGGING
 --------
@@ -205,7 +221,7 @@ TESTED PLATFORMS
 ----------------
 
 This module is in use on nearly all ClearCase platforms, including
-Solaris 2.6/7/8 and Windows NT4SP6/2KSP2. I'd expect it to work without
+Solaris 2.6/7 and Windows NT 4.0.  I would expect it to work without
 significant modification on any CC platform that supports perl 5.004 or
 above.
 
@@ -216,5 +232,5 @@ some haven't.
 FEEDBACK
 --------
 
-Feel free to communicate bugs, suggestions, or (preferably) patches to
+Feel free to communicate bugs, suggestions, or (best of all) patches to
 dsb@boyski.com.
