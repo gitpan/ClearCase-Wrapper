@@ -21,5 +21,11 @@ Revision history for Perl extension ClearCase::Wrapper.
 
 0.17 Tue Jul  4 22:52:08 EDT 2000
 	- Reworked setview/workon implementation.
+
+0.18 Sat Jul 15 08:56:38 EDT 2000
 	- Improvements to winkout.
 	- Various bugfixes in sample enhancements.
+	- Added -M flag.
+	- Only expand symlinks for ci/co cmds.
+	- New $CLEARCASE_WRAPPER_NATIVE EV to suppress all extensions.
+	- New mount extension for Windows.

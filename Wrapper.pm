@@ -1,5 +1,7 @@
 package ClearCase::Wrapper;
 
+$VERSION = '0.18';
+
 require 5.004;
 
 use constant MSWIN => $^O =~ /MSWin32|Windows_NT/i;
@@ -28,8 +30,6 @@ BEGIN {
     }
 }
 
-$VERSION = '0.17';
-
 use strict;
 
 use vars qw($prog $libdir @Admins);
@@ -42,9 +42,9 @@ $prog = $ENV{CLEARCASE_WRAPPER_PROG} || (split m%[/\\]+%, $0)[-1];
 umask 002 if !grep(/^$ENV{LOGNAME}$/, @Admins);
 
 # Similar to above but would withstand competition from settings in
-# .kshrc et al. It's critical to build DO's with generous umasks
-# in case they get winked in. We allow it to be overridden lower
-# than 002 but not higher.
+# .kshrc et al (e.g. in a setview). It's critical to build DO's with
+# generous umasks in case they get winked in. We allow it to be
+# overridden lower than 002 but not higher.
 $ENV{CLEARCASE_BLD_UMASK} = 2
 	if !defined($ENV{CLEARCASE_BLD_UMASK}) || $ENV{CLEARCASE_BLD_UMASK} > 2;
 
@@ -58,11 +58,7 @@ sub FirstIndex {
     return undef;
 }
 
-# Implements a global convenience/standardization feature: the flag -me
-# in the context of a command which takes a "-tag view-tag" causes
-# "$LOGNAME" to be prefixed to the tag name with an underscore.  This
-# relies on the fact that even though -me is a native cleartool flag, at
-# least through CC4.0 no command which takes -tag also takes -me natively.
+# Implements the -me -tag convention (see POD).
 if (my $me = FirstIndex('-me', @ARGV)) {
     if ($ARGV[0] =~ /^(?:set|start|end)view$|^workon$/) {
 	for (reverse @ARGV) {
@@ -78,8 +74,29 @@ if (my $me = FirstIndex('-me', @ARGV)) {
     }
 }
 
-# Turn symbolic links into their real paths so CC will "do the right thing".
-for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
+# Implements the -M flag (see POD).
+if (my $mflag = FirstIndex('-M', @ARGV)) {
+    splice(@ARGV, $mflag, 1);
+    die Msg('E', "sorry, you're on @*&# Windows") if MSWIN;
+    pipe(READER, WRITER);
+    my $pid;
+    if ($pid = fork) {
+	close WRITER;
+	open(STDIN, ">&READER") || die Msg('E', "STDIN: $!");
+	my $pager = $ENV{PAGER} || 'more';
+	exec $pager || warn Msg('W', "can't run $pager: $!");
+    } else {
+	die Msg('E', "can't fork") if !defined($pid);
+	close READER;
+	open(STDOUT, ">&WRITER") || die Msg('E', "STDOUT: $!");
+    }
+}
+
+# Turn symbolic links into their targets so CC will "do the right thing".
+# But only for checkin/checkout so we don't break e.g. rmname.
+if ($ARGV[0] =~ /^(?:ci|co|check)/) {
+    for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
+}
 
 #############################################################################
 # Usage Message Extensions
@@ -87,44 +104,49 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 {
    local $^W = 0;
    no strict 'vars';
-   # Real cleartool commands, wrapped.
-   $catcs = "\n* [-cmnt|-expand|-sources|-start]";
-   $checkin = "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
-   $diff = "\n* [-<n>] [-dir|-rec|-all|-avobs]";
-   $lock = "\n* [-allow login-name[,...] [-deny login-name[,...]";
-   $lsprivate = "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
-   $lsview = "* [-me]";
-   $mkelem = "\n* [-dir|-rec]";
-   $mklabel = "\n* [-up]";
-   $mkview = "\n* [-me] [-clone] [-local]";
-   $setcs = "\n\t     * [-clone view-tag] [-expand] [-sync]";
-   $setview = "* [-me] [-drive drive:] [-persistent]";
-   $uncheckout = "* [-nc]";
-   $winkin = "\n* [-vp] [-tag view-tag]";
-   # Pseudo cleartool commands, implemented here.
+
+   # Extended messages for actual cleartool commands that we extend.
+   $catcs	= "\n* [-cmnt|-expand|-sources|-start]";
+   $checkin	= "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
+   $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
+   $lock	= "\n* [-allow login-name[,...] [-deny login-name[,...]";
+   $lsprivate	= "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
+   $lsview	= "* [-me]";
+   $mkelem	= "\n* [-dir|-rec]";
+   $mklabel	= "\n* [-up]";
+   $mkview	= "\n* [-me] [-clone] [-local]";
+   $setcs	= "\n\t     * [-clone view-tag] [-expand] [-sync]";
+   $setview	= "* [-me] [-drive drive:] [-persistent]";
+   $uncheckout	= "* [-nc]";
+   $winkin	= "\n* [-vp] [-tag view-tag]";
+
+   # Extended messages for pseudo cleartool commands that we implement here.
    local $0 = $ARGV[0] || '';
-   $comment = "$0 [-new] object-selector ...";
-   $edattr = "$0 object-selector ...";
-   $edit = "$0 <co-flags> [-ci] <ci-flags> pname ...";
-   $grep = "$0 [grep-flags] pattern element";
-   $winkout = "$0 [-dir|-rec|-all] [-f file] [-pro/mote] [-do]
+   $comment	= "$0 [-new] object-selector ...";
+   $edattr	= "$0 object-selector ...";
+   $edit	= "$0 <co-flags> [-ci] <ci-flags> pname ...";
+   $grep	= "$0 [grep-flags] pattern element";
+   $winkout	= "$0 [-dir|-rec|-all] [-f file] [-pro/mote] [-do]
 		[-meta file [-print] file ...";
-   $workon = "$0 [-me] [-login] [-exec command-invocation] view-tag\n";
+   $workon	= "$0 [-me] [-login] [-exec command-invocation] view-tag\n";
 }
 
 #############################################################################
 # Command Aliases
 #############################################################################
-*ci = *checkin;
-*lsp = *lsprivate;
-*lspriv = *lsprivate;
-*unco = *uncheckout;
-*mkbrtype = *mklbtype;	# obviously not synonyms but the code's the same
-*edcmnt = *comment;
+*ci		= \&checkin;
+*egrep		= \&grep;
+*lsp		= \&lsprivate;
+*lspriv		= \&lsprivate;
+*unco		= \&uncheckout;
+*mkbrtype	= \&mklbtype;	# not synonyms but the code's the same
+*edcmnt		= \&comment;
 
+#############################################################################
 # Allow per-user configurability. Give the individual access to @ARGV just
 # before we hand it off to the local wrapper function and/or cleartool.
 # Access to this feature is suppressed if the 'no_overrides' file exists.
+#############################################################################
 if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
     require "$ENV{HOME}/.clearcase_profile.pl";
 }
@@ -132,7 +154,7 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
 # This is an enhancement like the ones below but is kept "above the
 # fold" because wrapping of cleartool man is an integral and generic
 # part of the module. It runs "cleartool man <cmd>" as requested,
-# followed by "perldoc ClearCase::Wrapper" iff <cmd> is extended here.
+# followed by "perldoc ClearCase::Wrapper" iff <cmd> is extended below.
 sub man {
     my $page = pop @ARGV;
     ClearCase::Argv->man($page)->system unless $page eq $prog;
@@ -281,21 +303,27 @@ sub AutoCheckedOut {
 =item 1. New B<-expand> flag
 
 Follows all include statements recursively in order to print a complete
-config spec. When used with B<-cmnt> flag, comments will be stripped
+config spec. When used with the B<-cmnt> flag, comments are stripped
 from this listing.
 
 =item 2. New B<-sources> flag
 
-Prints the files involved in the config spec (the config_spec file
-itself plus any include files).
+Prints all files involved in the config spec (the I<config_spec> file
+itself plus any files it includes).
 
 =item 3. New B<-start> flag
 
 Prints the preferred I<initial working directory> of a view by
 examining its config spec. If the conventional string C<##:Start:
 I<dir>> is present then the value of I<dir> is printed. Otherwise no
-output is produced. The B<workon> command (see) uses this value if
-present.
+output is produced. The B<workon> command (see) uses this value.  E.g.,
+using B<workon> instead of B<setview> with the config spec:
+
+    ##:Start: /vobs_fw/src/java
+    element * CHECKEDOUT
+    element * /main/LATEST
+
+would automatically cd to C</vobs_fw/src/java> within the set view.
 
 =back
 
@@ -342,7 +370,7 @@ Implements a new B<-revert> flag. This causes identical (unchanged)
 elements to be unchecked-out instead of being checked in.
 
 Since checkin is such a common operation, an unadorned I<ci> is
-"promoted" to I<ci -diff -all> to save typing.
+"promoted" to I<ci -diff -dir> to save typing.
 
 =cut
 
@@ -624,6 +652,7 @@ sub edit {
     $ed->system('-');
     exit $? unless $opt{ci};
     # Use the wrapper for checkin in case of special flags.
+    $ed->optsCI('-revert') unless $ed->optsCI;
     $ed->prog([$^X, '-S', $0, 'ci'])->exec('CI');
 }
 
@@ -652,8 +681,9 @@ sub grep {
     my $lsvt = ClearCase::Argv->new('lsvt', ['-s'], $elem);
     $lsvt->opts('-all', $lsvt->opts) if $opt{all} || $limit > 1;
     chomp(my @vers = sort {($b =~ m%/(\d+)%)[0] <=> ($a =~ m%/(\d+)%)[0]}
-						    grep {m%/\d+$%} $lsvt->qx);
+						grep {m%/\d+$%} $lsvt->qx);
     splice(@vers, $limit) if $limit;
+    splice(@ARGV, 0, 1, 'egrep');
     Argv->new(@ARGV, @vers)->dbglevel(1)->exec;
 }
 
@@ -661,7 +691,8 @@ sub grep {
 
 New B<-allow> and B<-deny> flags. These work like B<-nuser> but operate
 incrementally on an existing B<-nuser> list rather than completely
-replacing it.
+replacing it. When B<-allow> or B<-deny> are used, B<-replace> is
+implied.
 
 =cut
 
@@ -690,6 +721,7 @@ sub lock {
     } elsif ($opt{allow}) {
 	$lock->opts($lock->opts, '-nusers', $opt{allow});
     }
+    $lock->opts($lock->opts, '-replace') unless $lock->flag('replace');
     $lock->dbglevel(1)->exec;
 }
 
@@ -729,41 +761,45 @@ sub lsprivate {
     }
 
     # Extension: implement [-dir|-rec|-all|-avobs]
-    if ($opt{all}) {
-	$lsp->opts($lsp->opts, '-invob', $pname);
-    } elsif ($opt{directory} || $opt{recurse}) {
+    if ($opt{directory} || $opt{recurse} || $opt{all} || $opt{ext}) {
 	require Cwd;
 	my $dir = Cwd::abs_path($pname);
 	my $tag = $lsp->flag('tag');
-	if ($dir =~ s%/+view/([^/]+)%%) {	# UNIX view-extended path
-	    $tag ||= $1;
-	} elsif ($dir =~ s%^[A-Z]:%%) {		# DOS view-extended path
-	    if ($tag) {
-		$dir =~ s%^/$tag%%i;
-	    } else {
+	if ($opt{directory} || $opt{recurse}) {
+	    if ($dir =~ s%/+view/([^/]+)%%) {	# UNIX view-extended path
+		$tag ||= $1;
+	    } elsif ($dir =~ s%^[A-Z]:%%) {	# WIN view-extended path
+		if ($tag) {
+		    $dir =~ s%^/$tag%%i;
+		} else {
+		    $tag = ViewTag();
+		}
+	    } elsif (!$tag) {
 		$tag = ViewTag();
 	    }
-	} elsif (!$tag) {
-	    $tag = ViewTag();
+	    $lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
+	} elsif ($opt{all}) {
+	    $lsp->opts($lsp->opts, '-invob', $pname);
 	}
-	$lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
 	chomp(my @privs = sort $lsp->qx);
 	exit $? if $? || !@privs;
-	for (@privs) {
-	    if (MSWIN) {
-		s/^[A-Z]://i;
-		s%\\%/%g;
+	my @results = @privs;
+	if ($opt{directory} || $opt{recurse}) {
+	    for (@privs) {
+		if (MSWIN) {
+		    s/^[A-Z]://i;
+		    s%\\%/%g;
+		}
+		s%(/+view)?/$tag%%;
 	    }
-	    s%(/+view)?/$tag%%;
+	    @privs = map {$_ eq $dir ? "$_/" : $_} @privs;
+	    my $job = $opt{relative} ? 'map ' : 'grep ';
+	    $job .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
+	    $opt{type} ||= 'e' if $opt{visible};
+	    $job = "grep {-$opt{type}} $job" if $opt{type};
+	    eval qq(\@results = $job \@privs);
+	    exit 0 if !@results;
 	}
-	@privs = map {$_ eq $dir ? "$_/" : $_} @privs;
-	my $action = $opt{relative} ? 'map ' : 'grep ';
-	$action .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
-	$opt{type} ||= 'e' if $opt{visible};
-	$action = "grep {-$opt{type}} $action" if $opt{type};
-	my @results;
-	eval qq(\@results = $action \@privs);
-	exit 0 if !@results;
 	if ($opt{ext}) {	# sort by extension
 	    require File::Basename;
 	    @results = map  { $_->[0] }
@@ -1112,6 +1148,43 @@ sub mkview {
     return 0;
 }
 
+=item * MOUNT
+
+This is a Windows-only enhancement: on UNIX, I<mount> behaves correctly
+and we do not mess with its behavior. On Windows, I<cleartool mount
+-all> gives an error for already-mounted VOBs for some reason; these
+are now ignored as on UNIX. At the same time, VOB tags containing I</>
+are normalized to I<\> so they'll match the registry, and an extension
+is made to allow multiple VOB tags to be passed to one I<mount>
+command.
+
+=cut
+
+sub mount {
+    return 0 if !MSWIN || @ARGV < 2;
+    my %opt;
+    GetOptions(\%opt, qw(all));
+    my $mount = ClearCase::Argv->new(@ARGV);
+    $mount->autofail(1);
+    $mount->parse('options=s');
+    die Msg('E', qq(Extra arguments: "@{[$mount->args]}"))
+						if $mount->args && $opt{all};
+    my @tags = $mount->args;
+    for (@tags) { s%[/\\]%\\\\%g }	# VOB tags are /-vs-\ sensitive
+    my $lsvob = ClearCase::Argv->lsvob(@tags);
+    # The set of all known public VOBs.
+    my @public = grep /\spublic\b/, $lsvob->qx;
+    # The subset which are not mounted.
+    my @todo = map {(split /\s+/)[1]} grep /^\s/, @public;
+    # If no vobs are mounted, let the native mount -all proceed.
+    return 0 if @public == @todo;
+    # Otherwise mount what's needed one by one.
+    for (@todo) {
+	$mount->args($_)->system;
+    }
+    exit 0;
+}
+
 =item * SETVIEW
 
 ClearCase 4.0 for Windows completely removes I<setview> functionality,
@@ -1127,6 +1200,8 @@ when the setview process is existed.
 
 The setview emulation sets I<CLEARCASE_ROOT> for compatibility and adds
 a new EV I<CLEARCASE_VIEWDRIVE>.
+
+UNIX setview functionality is left alone.
 
 =cut
 
@@ -1263,7 +1338,8 @@ If a file called I<.viewenv.pl> exists in the I<initial working
 directory>, it's read before starting the user's shell. This file uses
 Perl syntax and must end with a "1;" like any C<require-d> file.  Any
 unrecognized arguments given to I<workon> following the view name will
-be passed on to C<.viewenv.pl> in C<@ARGV>.
+be passed on to C<.viewenv.pl> in C<@ARGV>. Environment variables
+required for builds within the setview may be set here.
 
 =cut
 
@@ -1546,6 +1622,43 @@ sub winkout {
 
 =back
 
+=head1 GENERAL FEATURES
+
+=over 4
+
+=item * symlink expansion
+
+Before processing a checkin or checkout command, any symbolic links on
+the command line are replaced with the file they point to. This allows
+allowd developers to operate directly on symlinks for ci/co.
+
+=item * -M flag
+
+As a convenience feature, the B<-M> flag runs all output through your
+pager. Of course C<"ct lsh -M foo"> saves only a few keystrokes over
+"ct lsh foo | more" but for heavy users of shell history the more
+important feature is that it preserves the value of ESC-_ (C<ksh -o
+vi>) or !$ (csh).
+
+=item * -me -tag
+
+Introduces a global convenience/standardization feature: the flag
+B<-me> in the context of a command which takes a B<-tag view-tag>
+causes I<"$LOGNAME"> to be prefixed to the tag name with an
+underscore.  This relies on the fact that even though B<-me> is a
+native cleartool flag, at least through CC4.0 no command which takes
+B<-tag> also takes B<-me> natively. For example:
+
+    % <wrapper-context> mkview -me -tag myview ... 
+
+The commands I<setview, startview, endview, and lsview> also take B<-me>,
+such that the following commands are equivalent:
+
+    % <wrapper-context> setview dboyce_myview
+    % <wrapper-context> setview -me myview
+
+=back
+
 =head1 CONFIGURATION
 
 Various degrees of configurability are supported:
@@ -1561,7 +1674,7 @@ the sub and make the appropriate addition to the "Usage Message
 Extensions" section.  Also, if the command has an abbreviation (e.g.
 checkout/co) you should add that to the "Command Aliases" section.
 
-The override subroutine is called with @ARGV as its parameter list (and
+This override subroutine is called with @ARGV as its parameter list (and
 @ARGV is also available directly of course). The sub can do whatever it
 likes but it's strongly recommended that I<ClearCase::Argv> be used to
 run any cleartool subcommands and its base class I<Argv> be used to run
@@ -1584,14 +1697,26 @@ array of Perl syntax.
 This distribution comes with a file called I<clearcase_profile> which
 is installed as part of the module. If the user has no
 I<clearcase_profile> file in his/her home directory and if
-CLEARCASE_PROFILE isn't already set, the wrapper will automatically
-point CLEARCASE_PROFILE at the supplied file. This allows the
+CLEARCASE_PROFILE isn't already set, CLEARCASE_PROFILE will
+automatically be pointed at this supplied file. This allows the
 administrator to set sitewide defaults of checkin/checkout comment
 handling using the syntax supported by ClearCase natively but without
 each user needing to maintain their own config file or set their own
 EV.
 
+=item * CLEARCASE_WRAPPER_NATIVE
+
+This environment variable may be set to suppress all extensions,
+causing the wrapper to behave just like an alias to cleartool (except
+slower).
+
 =back
+
+=head1 DIAGNOSTICS
+
+The flag B<-/dbg=1> prints all "real" cleartool operations executed
+by the wrapper to stderr, while B<-/dbg=2> shows the output of those
+commands as well.
 
 =head1 INSTALLATION
 
