@@ -1,12 +1,12 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.03';
+$VERSION = '1.04';
 
-require 5.004;
+require 5.006;
 
 use AutoLoader 'AUTOLOAD';
 
-use vars qw(%Packages %FuncMap $libdir);
+use vars qw(%Packages %ExtMap $libdir);
 
 # Inherit some symbols from the main package. We will later "donate"
 # these to all overlay packages as well.
@@ -99,14 +99,24 @@ for my $subdir (qw(ClearCase/Wrapper ClearCase/Wrapper/Site)) {
 
 	    # Now the overlay module is read in. We need to examine its
 	    # newly-created symbol table, determine which functions
-	    # it defined, and import them here.
+	    # it defined, and import them here. The same basic thing is
+	    # done for the base package later.
 	    my %names = %{"${pkg}::"};
 	    for (keys %names) {
 		my $tglob = "${pkg}::$_";
+		# Skip functions that can't be names of valid cleartool ops.
 		next if m%^_?[A-Z]%;
-		next unless exists &$tglob;
-		$FuncMap{$_} = $pkg;
-		# Here we import the entire typeglob for 'foo' when we
+		# Skip typeglobs that don't involve functions. We can only
+		# do this test under >=5.6.0 since exists() on a coderef
+		# is a new feature. The eval is needed to avoid a compile-
+		# time error in <5.6.0.
+		if ($] >= 5.006) {
+		    next unless eval "exists \&$tglob";
+		}
+		# Take what survives the above tests and create a hash
+		# mapping defined functions to the pkg that defines them.
+		$ExtMap{$_} = $pkg;
+		# We import the entire typeglob for 'foo' when we
 		# find an extension func named foo(). This allows usage
 		# msg extensions (in the form $foo) to come over too.
 		eval qq(*$_ = *$tglob);
@@ -222,6 +232,7 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    # Extended messages for pseudo cleartool commands that we implement here.
    local $0 = $ARGV[0] || '';
    $edit	= "$0 <co-flags> [-ci] <ci-flags> pname ...";
+   $extensions	= "$0 [-long]";
 }
 
 #############################################################################
@@ -243,8 +254,32 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
     require "$ENV{HOME}/.clearcase_profile.pl";
 }
 
-# Returns a boolean indicating whether the named cmd is native to CC
-# cmd or not. Note: the first call to this func has a cost of one
+# Add to ExtMap the names of extensions defined in the base package.
+for (keys %ClearCase::Wrapper::) {
+    # Skip functions that can't be names of valid cleartool ops.
+    next if m%^_?[A-Z]%;
+    # Skip typeglobs that don't involve functions. We can only
+    # do this test under >=5.6.0 since exists() on a coderef
+    # is a new feature. The eval is needed to avoid a compile-
+    # time error in <5.6.0.
+    if ($] >= 5.006) {
+	next unless eval "exists \&ClearCase::Wrapper::$_";
+    }
+    # Take what survives the above tests and create a hash
+    # mapping defined functions to the pkg that defines them.
+    $ExtMap{$_} ||= __PACKAGE__;
+}
+
+# Returns undefined if <op> is not being extended and returns the
+# package that extends it otherwise. Potentially useful for extension
+# writers.
+sub Extension {
+    my $op = shift;
+    return $ExtMap{$op};
+}
+
+# Returns a boolean indicating whether the named cmd is native to
+# CC or not. Note: the first call to this func has a "cost" of one
 # "cleartool help" operation; subsequent calls are free.
 {
     my %native;
@@ -254,8 +289,13 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
 	    ($op = (caller(1))[3]) =~ s%.*:%%;
 	}
 	if (! keys %native) {
-	    %native = map {/^\S+\s+(\S+)/; $1 => 1} grep /^Usage:/,
-						    ClearCase::Argv->help->qx;
+	    my @usg = grep /^Usage:/, ClearCase::Argv->help->qx;
+	    for (@usg) {
+		if (/^Usage:\s*(\w+)\s*(\|\s*(\w+))?/) {
+		    $native{$1} = 1 if $1;
+		    $native{$3} = 1 if $3;
+		}
+	    }
 	}
 	return $native{$op};
     }
@@ -268,7 +308,7 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
 sub man {
     my $page = (grep !/^-/, @ARGV)[1];
     return 0 unless $page;
-    ClearCase::Argv->new(@ARGV)->system unless $page eq $::prog;
+    ClearCase::Argv->new(@ARGV)->system if Native($page);
     if (exists($ClearCase::Wrapper::{$page})) {
 	# This EV hack causes perldoc to search for the right keyword
 	# within the module's perldoc.
@@ -284,7 +324,7 @@ sub man {
     my $psep = MSWIN ? ';' : ':';
     require File::Basename;
     $ENV{PATH} = join($psep, File::Basename::dirname($^X), $ENV{PATH});
-    my $module = $FuncMap{$page} || __PACKAGE__;
+    my $module = $ExtMap{$page} || __PACKAGE__;
     Argv->perldoc($module)->exec;
     exit $?;
 }
@@ -489,7 +529,10 @@ sub AutoViewPrivate {
 	require File::Spec;
 	File::Spec->VERSION(0.82);
 	die Msg('E', "-do flag not supported in snapshot views") if $do;
-	my $ls = Argv->new([$^X, '-S', $0, 'ls'], [qw(-s -view), $scope]);
+	die Msg('E', "$scope flag not supported in snapshot views")
+							    if $scope =~ /^-a/;
+	my $ls = ClearCase::Argv->ls([qw(-s -view -vis)]);
+	$ls->opts($ls->opts, $scope) if $scope =~ /^-r/;
 	chomp(@vps = $ls->qx);
 	@vps = map {File::Spec->rel2abs($_)} @vps;
     }
@@ -500,7 +543,7 @@ sub AutoViewPrivate {
     @vps = grep !m%$screen%, @vps if $screen;
     @vps = sort @vps;
 
-    if ($parents && @vps) {
+    if ($parents && @vps && $scope =~ /^-(dir|rec)/) {
 	# In case the command was run in a v-p directory, traverse upwards
 	# towards the vob root adding parent directories till we reach
 	# a versioned dir.
@@ -524,6 +567,26 @@ sub AutoViewPrivate {
 =head1 CLEARTOOL ENHANCEMENTS
 
 =over 4
+
+=item * EXTENSIONS
+
+A pseudo-command which lists the currently-defined extensions. Use with
+B<-long> to see which overlay module defines each extension. Note that
+both extensions and their aliases (e.g. I<checkin> and I<ci>) are
+shown.
+
+=cut
+
+sub extensions {
+    my %opt;
+    GetOptions(\%opt, qw(short long));
+    my @exts = sort grep !/^_/, keys %ExtMap;
+    for (@exts) {
+	print "$ExtMap{$_}::" if $opt{long};
+	print $_, "\n";
+    }
+    exit 0;
+}
 
 =item * CI/CHECKIN
 
@@ -681,7 +744,7 @@ sub diff {
     }
 }
 
-=item * EDIT
+=item * EDIT/VI
 
 Convenience command. Same as 'checkout' but execs your favorite editor
 afterwards. Takes all the same flags as checkout, plus B<-ci> to check
@@ -904,12 +967,12 @@ sub mkelem {
 	# a versioned dir, then move all the files from the original
 	# back into the new dir (still as view-private files).
 	my $tmpdir = "$cand.$$.keep.d";
-	die Msg('E', "$cand: $!") unless rename($cand, $tmpdir);
+	die Msg('E', "$cand: $!") if !rename($cand, $tmpdir);
 	$ct->mkdir(['-nc'], $cand)->system;
 	opendir(DIR, $tmpdir) || die Msg('E', "$tmpdir: $!");
 	while (defined(my $i = readdir(DIR))) {
 	    next if $i eq '.' || $i eq '..';
-	    rename("$tmpdir/$i", "$cand/$i") || die Msg('E', "$cand/$i: $!");
+	    die Msg('E', "$cand/$i: $!") if !rename("$tmpdir/$i", "$cand/$i");
 	}
 	closedir DIR;
 	warn Msg('W', "$tmpdir: $!") unless rmdir $tmpdir;
@@ -958,7 +1021,7 @@ sub uncheckout {
 
 Before processing a checkin or checkout command, any symbolic links on
 the command line are replaced with the file they point to. This allows
-allowd developers to operate directly on symlinks for ci/co.
+developers to operate directly on symlinks for ci/co.
 
 =item * -M flag
 

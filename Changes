@@ -93,3 +93,10 @@ Revision history for Perl extension ClearCase::Wrapper.
 
 1.03 Thu Jan 31 11:18:49 EST 2002
 	- Added Assert() function to aid extension writers.
+
+1.04 Fri Feb  1 23:25:34 EST 2002
+	- NOW REQUIRES Perl 5.6.0 (new features turn out to require new ops).
+	- Fixed mkelem -dir bug when run in a view-private dir
+	  within a dynamic view.
+	- Added 'ct extensions' cmd to list defined extensions
+	  and what package they come from.
