@@ -2,7 +2,7 @@
 			ClearCase::Wrapper
 ========================================================================
 
-Copyright (c) 1997,1998,1999,2000 David Boyce (dsb@world.std.com). All
+Copyright (c) 1997,1998,1999,2000 David Boyce (dsb@boyski.com). All
 rights reserved.  This program is free software; you can redistribute
 it and/or modify it under the same terms as Perl itself.
 
@@ -231,4 +231,4 @@ FEEDBACK
 --------
 
 Feel free to communicate bugs, suggestions, or (best of all) patches to
-dsb@world.std.com.
+dsb@boyski.com.

@@ -43,6 +43,15 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Added a dependency on File::Spec 0.82, just because it's
 	  goodness and makes coding of ClearCase::Wrapper easier.
 	- Added support for a Site.pm file containing site-specific
-	  work. THIS IS A SIGNIFICANT IMPROVEMENT, as without Site.pm
+	  work. This is a significant improvement, as without Site.pm
 	  it's hard to modify and/or add new features to
 	  the module and also accept new versions from CPAN.
+
+0.23 Mon May 14 11:11:16 EDT 2001
+	- Reworked mkview code to depend on CC storage locations.
+	  Note: this mkview code now requires CC 4.1 or above.
+
+0.24 Fri May 18 11:52:43 EDT 2001
+	- Added checkout -dir/-rec. It was in an old rev and I was
+	  asked to put it back.
+	- Added mkelem -ok

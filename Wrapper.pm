@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '0.22';
+$VERSION = '0.24';
 
 require 5.004;
 
@@ -115,25 +115,30 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
    # Extended messages for actual cleartool commands that we extend.
    $catcs	= "\n* [-cmnt|-expand|-sources|-start]";
    $checkin	= "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
+   $ci		= $checkin;
    $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
    $lock	= "\n* [-allow|-deny login-name[,...]] [-iflocked]";
    $lsprivate	= "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
+   $lsp		= $lsprivate;
    $lsview	= "* [-me]";
-   $mkelem	= "\n* [-dir|-rec] [-do]";
+   $mkelem	= "\n* [-dir|-rec] [-do] [-ok]";
    $mklabel	= "\n* [-up]";
    $mkview	= "\n* [-me] [-clone]";
    $setcs	= "\n\t     * [-clone view-tag] [-expand] [-sync]";
    $setview	= "* [-me] [-drive drive:] [-persistent]";
    $uncheckout	= "* [-nc]";
+   $unco	= $uncheckout;
    $winkin	= "\n* [-vp] [-tag view-tag]";
 
    # Extended messages for pseudo cleartool commands that we implement here.
    local $0 = $ARGV[0] || '';
-   $comment	= "$0 [-new] object-selector ...";
+   $comment	= "$0 [-new] [-element] object-selector ...";
    $diffcs	= "$0 view-tag-1 [view-tag-2]";
-   $edattr	= "$0 object-selector ...";
+   $edattr	= "$0 [-element] object-selector ...";
    $edit	= "$0 <co-flags> [-ci] <ci-flags> pname ...";
    $grep	= "$0 [grep-flags] pattern element";
+   $recheckout	= "$0 pname ...\n";
+   $reco	= $recheckout;
    $winkout	= "$0 [-dir|-rec|-all] [-f file] [-pro/mote] [-do]
 		[-meta file [-print] file ...";
    $workon	= "$0 [-me] [-login] [-exec command-invocation] view-tag\n";
@@ -143,11 +148,13 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
 # Command Aliases
 #############################################################################
 *ci		= \&checkin;
+*co		= \&checkout;
 *egrep		= \&grep;
 *lsp		= \&lsprivate;
 *lspriv		= \&lsprivate;
 *unco		= \&uncheckout;
 *mkbrtype	= \&mklbtype;	# not synonyms but the code's the same
+*reco		= \&recheckout;
 *edcmnt		= \&comment;
 *vi		= \&edit;
 
@@ -259,6 +266,7 @@ sub Burrow {
 sub Pred {
     my($vers, $count, $ct) = @_;
     if ($count) {
+	$ct ||= ClearCase::Argv->new;
 	(my $elem = $vers) =~ s/@@.*//;
 	chomp(my $pred = $ct->desc([qw(-pred -s)], $vers)->qx);
 	return Pred("$elem@\@$pred", $count-1, $ct);
@@ -296,13 +304,15 @@ sub ViewTag {
 # Print out the list of elements derived as 'eligible', whatever
 # that means for the current op.
 sub ShowFound {
-    if (@_ == 0) {
+    my $n = @_;
+    if ($n == 0) {
 	print STDERR Msg(undef, "no eligible elements found");
-    } elsif (@_ <= 10) {
-	print STDERR Msg(undef, "found: @_");
-    } elsif (@_) {
-	my $i = @_ - 4;
-	print STDERR Msg(undef, "found: @_[0..3] [plus $i more] ...");
+    } elsif ($n == 1) {
+	print STDERR Msg(undef, "found 1 file: @_");
+    } elsif ($n <= 10) {
+	print STDERR Msg(undef, "found $n files: @_");
+    } else {
+	print STDERR Msg(undef, "found $n files: @_[0..3] ...");
     }
 }
 
@@ -322,6 +332,41 @@ sub AutoCheckedOut {
     ShowFound(@co);
     exit 0 unless @co;
     return @co;
+}
+
+# Return the list of not-checked-out elements according to
+# the -dir/-rec flags (-all/-avobs not supported).
+sub AutoNotCheckedOut {
+    return () unless @_;
+    my @args = @_;
+    my @agg = grep /^-(?:dir|rec|all|avo)/, @args;
+    return @args unless @agg;
+    die Msg('E', "mutually exclusive flags: @agg") if @agg > 1;
+    die Msg('E', "only -dir/-recurse supported: @agg") if $agg[0] =~ /^-a/;
+    # First derive a list of all FILE elements under the cwd.
+    my @e = ClearCase::Argv->new(qw(find . -type f -cvi -nxn -print))->qx;
+    chomp @e;
+    # Turn the list into a hash while removing the leading "./".
+    my %elems = map {substr($_, 2) => 1} @e;
+    # Then, narrow it to elems WITHIN the cwd unless -rec.
+    if ($agg[0] !~ /^-rec/) {
+	for (keys %elems) {
+	    delete $elems{$_} if m%[/\\]%;
+	}
+    }
+    # Remove those which are already checked out to this view.
+    if (%elems) {
+	my $lsco = ClearCase::Argv->new('lsco', [qw(-cvi -s)]);
+	for ($lsco->args(keys %elems)->qx) {
+	    chomp;
+	    delete $elems{$_};
+	}
+    }
+    # Done: we have a list of all file elems that are not checked out.
+    my @not_co = sort keys %elems;
+    ShowFound(@not_co);
+    exit 0 unless @not_co;
+    return @not_co;
 }
 
 ###########################################################################
@@ -471,6 +516,27 @@ sub checkin {
     exit $?>>8;
 }
 
+=item * CO/CHECKOUT
+
+Extended to handle the B<-dir/-rec> flags. NOTE: the B<-all/-avobs>
+flags are disallowed for checkout.
+
+=cut
+
+sub checkout {
+    return 0 unless grep /^-(dir|rec)/, @ARGV;
+
+    # Remove the aggregation flag, push the aggregated list of
+    # not-checked-out file elements onto argv, and return.
+    my @added = AutoNotCheckedOut(@ARGV);
+    {
+	my %rm;
+	GetOptions(\%rm, qw(directory recurse all avobs do));
+    }
+    push(@ARGV, @added);
+    return 0;
+}
+
 =item * COMMENT
 
 For each ClearCase object specified, dump the current comment into a
@@ -487,7 +553,7 @@ See B<edattr> for editor selection rules.
 sub comment {
     shift @ARGV;
     my %opt;
-    GetOptions(\%opt, 'new');
+    GetOptions(\%opt, qw(element new));
     my $retstat = 0;
     my $editor = $ENV{WINEDITOR} || $ENV{VISUAL} || $ENV{EDITOR} ||
 						    (MSWIN ? 'notepad' : 'vi');
@@ -496,6 +562,7 @@ sub comment {
     my($csum_pre, $csum_post) = (0, 0);
     for my $obj (@ARGV) {
 	my @input = ();
+	$obj .= '@@' if $opt{element};
 	if (!$opt{new}) {
 	    @input = $ct->desc([qw(-fmt %c)], $obj)->qx;
 	    next if $?;
@@ -612,6 +679,8 @@ default editor used is vi on UNIX and notepad on Windows.
 =cut
 
 sub edattr {
+    my %opt;
+    GetOptions(\%opt, qw(element));
     shift @ARGV;
     my $retstat = 0;
     my $editor = $ENV{WINEDITOR} || $ENV{VISUAL} || $ENV{EDITOR} ||
@@ -620,6 +689,7 @@ sub edattr {
     my $ctq = $ct->clone({-stdout=>0, -stderr=>0});
     for my $obj (@ARGV) {
 	my %indata = ();
+	$obj .= '@@' if $opt{element};
 	my @lines = $ct->desc([qw(-aattr -all)], $obj)->qx;
 	if ($?) {
 	    $retstat++;
@@ -937,15 +1007,18 @@ automatic directory checkout is only enabled when the candidate list is
 derived via the B<-dir/-rec> flags>.  If the B<-ci> flag is present,
 any directories automatically checked out are checked back in too.
 
-By default, only regular view-private files are considered by
-I<-dir|-rec>.  The I<-do> flag causes derived objects to be made into
-elements as well.
+By default, only regular (I<-other>) view-private files are considered
+by I<-dir|-rec>.  The I<-do> flag causes derived objects to be made
+into elements as well.
+
+If I<-ok> is specified, the user will be prompted to continue after the
+list of eligible files is determined.
 
 =cut
 
 sub mkelem {
     my %opt;
-    GetOptions(\%opt, qw(directory recurse all avobs do));
+    GetOptions(\%opt, qw(directory recurse all avobs do ok));
     die Msg('E', "-all|-avobs flags not supported for mkelem")
 					if $opt{all} || $opt{avobs};
     return unless $opt{directory} || $opt{recurse};
@@ -970,6 +1043,11 @@ sub mkelem {
     @vps = grep !/(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)$/, @vps;
     ShowFound(@vps);
     exit 0 unless @vps;
+    if ($opt{ok}) {
+	print "Continue? [yes] ";
+	chomp(my $resp = <STDIN>);
+	exit 0 if $resp && $resp !~ /^y/i;
+    }
 
     my $ct = ClearCase::Argv->new({-autofail=>1});
 
@@ -1264,9 +1342,41 @@ sub mount {
     exit 0;
 }
 
+=item * RECO/RECHECKOUT
+
+Redoes a checkout without the database operations by simply copying the
+contents of the existing checkout's predecessor over the view-private
+checkout file. The previous contents are moved aside to "<element>.reco".
+
+=cut
+
+sub recheckout {
+    shift;
+    require File::Copy;
+    for (@_) {
+	if (! -w $_) {
+	    Msg('W', "$_: not checked out");
+	    next;
+	}
+	my $pred = Pred($_, 1);
+	my $keep = "$_.reco";
+	unlink $keep;
+	if (rename($_, $keep)) {
+	    if (File::Copy::copy($pred, $_)) {
+		chmod 0644, $_;
+	    } else {
+		Msg('E', (-r $_ ? $keep : $_) . ": $!");
+	    }
+	} else {
+	    Msg('E', "cannot rename $_ to $keep: $!");
+	}
+    }
+    exit 0;
+}
+
 =item * SETVIEW
 
-ClearCase 4.0 for Windows completely removes I<setview> functionality,
+ClearCase 4.0 for Windows completely removed I<setview> functionality,
 but this wrapper emulates it by attaching the view to a drive letter
 and cd-ing to that drive. It supports all the flags I<setview> for
 CC 3.2.1/Windows supported (B<-drive>, B<-exec>, etc.) and adds a
@@ -1822,9 +1932,9 @@ have by default.
 
 =head1 COPYRIGHT
 
-Copyright (c) 1997,1998,1999,2000 David Boyce (dsb@world.std.com). All
-rights reserved.  This Perl program is free software; you may
-redistribute it and/or modify it under the same terms as Perl itself.
+Copyright (c) 1997-2001 David Boyce (dsb@boyski.com). All rights
+reserved.  This Perl program is free software; you may redistribute it
+and/or modify it under the same terms as Perl itself.
 
 =cut
 
