@@ -175,7 +175,9 @@ Installation consists of the usual sequence of commands:
    make test
    make install
 
-To make a private testing version in your home directory, use instead:
+Where the install step may need to be run with superuser privileges.
+Also, on Windows you'd want to use nmake or dmake instead of 'make'. To
+install a private testing version in your home directory, use:
 
    perl Makefile.PL PREFIX=~
 

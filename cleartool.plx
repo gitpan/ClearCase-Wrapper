@@ -28,7 +28,7 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 	    (defined($ClearCase::Wrapper::{$ARGV[0]}) || $ARGV[0] eq 'help')) {
     # This provides support for writing extensions.
     require ClearCase::Argv;
-    ClearCase::Argv->inpathnorm(0);	# unset an unfortunate default
+    ClearCase::Argv->inpathnorm(0);	# backward compat with Argv<1.03
     ClearCase::Argv->attropts;		# this is what parses -/dbg=1 et al
     {
 	# "Import" these interfaces in case they're wanted.

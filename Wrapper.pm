@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '0.24';
+$VERSION = '0.25';
 
 require 5.004;
 
@@ -62,7 +62,7 @@ sub FirstIndex {
 
 # Implements the -me -tag convention (see POD).
 if (my $me = FirstIndex('-me', @ARGV)) {
-    if ($ARGV[0] =~ /^(?:set|start|end)view$|^(?:workon|rdl)$/) {
+    if ($ARGV[0] =~ /^(?:set|start|end)view$|^rdl$|^work/) {
 	my $delim = 0;
 	for (@ARGV) {
 	    last if /^--$/;
@@ -82,15 +82,15 @@ if (my $me = FirstIndex('-me', @ARGV)) {
 }
 
 # Implements the -M flag (see POD).
-if (my $mflag = FirstIndex('-M', @ARGV) || $ENV{CLEARCASE_WRAPPER_MORE}) {
-    splice(@ARGV, $mflag, 1) if $mflag && !$ENV{CLEARCASE_WRAPPER_MORE};
-    die Msg('E', "sorry, can't do -M on @*&# Windows") if MSWIN;
+if (my $mflag = FirstIndex('-M', @ARGV) || $ENV{CLEARCASE_WRAPPER_PAGER}) {
+    splice(@ARGV, $mflag, 1) if $mflag && !$ENV{CLEARCASE_WRAPPER_PAGER};
     pipe(READER, WRITER);
     my $pid;
     if ($pid = fork) {
 	close WRITER;
 	open(STDIN, ">&READER") || die Msg('E', "STDIN: $!");
-	my $pager = $ENV{PAGER} || 'more';
+	my $pager = $ENV{CLEARCASE_WRAPPER_PAGER} || $ENV{PAGER} || 'more';
+	$ENV{MORE} ||= '-e';	# probably what the user wants for 'more' cmd
 	exec $pager || warn Msg('W', "can't run $pager: $!");
     } else {
 	die Msg('E', "can't fork") if !defined($pid);
@@ -114,8 +114,10 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
 
    # Extended messages for actual cleartool commands that we extend.
    $catcs	= "\n* [-cmnt|-expand|-sources|-start]";
-   $checkin	= "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
+   $checkin	= "\n* [-dir|-rec|-all|-avobs] [-ok] [-diff [diff-opts]] [-revert]";
    $ci		= $checkin;
+   $checkout	= "\n* [-dir|-rec] [-ok]";
+   $co		= $checkout;
    $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
    $lock	= "\n* [-allow|-deny login-name[,...]] [-iflocked]";
    $lsprivate	= "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
@@ -157,6 +159,7 @@ if (@ARGV && $ARGV[0] =~ /^(?:ci|co|unc|check|diff|edit)/) {
 *reco		= \&recheckout;
 *edcmnt		= \&comment;
 *vi		= \&edit;
+*work		= \&workon;
 
 #############################################################################
 # Allow per-user configurability. Give the individual access to @ARGV just
@@ -369,6 +372,13 @@ sub AutoNotCheckedOut {
     return @not_co;
 }
 
+# Ask if it's OK to continue, exit if no. Generally triggered by -ok flag.
+sub ok {
+    print "Continue? [yes] ";
+    chomp(my $resp = <STDIN>);
+    exit 0 if $resp && $resp !~ /^y/i;
+}
+
 ###########################################################################
 ## Beginning of command enhancements ...
 ###########################################################################
@@ -467,7 +477,7 @@ sub checkin {
 
     my %opt;
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
-    GetOptions(\%opt, qw(diff revert re999)) if grep /^-(dif|rev)/, @ARGV;
+    GetOptions(\%opt, qw(diff ok revert re999)) if grep /^-(dif|ok|rev)/, @ARGV;
 
     my $ci = ClearCase::Argv->new(@ARGV);
 
@@ -483,6 +493,8 @@ sub checkin {
     # Now do auto-aggregation on the remaining args.
     $ci->args(AutoCheckedOut($ci->args));
     my @elems = $ci->args;
+
+    ok() if $opt{ok};		# may exit
 
     # Default to -nc if checking in directories only.
     if (!grep(/^-c$|^-cq|^-nc$|^-cfi/, @ARGV)) {
@@ -501,11 +513,12 @@ sub checkin {
     $ci->opts('-cqe', $ci->opts)
 			if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
 
-    $diff->stdout(0) if !$opt{'diff'};  # if -revert we only care about retcode
+    # If -revert we only care about retcode
+    $diff->stdout(0) if !$opt{'diff'};
     for $elem (@elems) {
 	my $chng = $diff->args($elem)->system('DIFF');
 	if ($opt{revert} && !$chng) {
-	    # if -revert and no changes, unco instead of checkin
+	    # If -revert and no changes, unco instead of checkin
 	    ClearCase::Argv->unco(['-rm'], $elem)->system;
 	} else {
 	    $ci->args($elem)->system;
@@ -529,11 +542,10 @@ sub checkout {
     # Remove the aggregation flag, push the aggregated list of
     # not-checked-out file elements onto argv, and return.
     my @added = AutoNotCheckedOut(@ARGV);
-    {
-	my %rm;
-	GetOptions(\%rm, qw(directory recurse all avobs do));
-    }
+    my %opt;
+    GetOptions(\%opt, qw(directory recurse all avobs ok));
     push(@ARGV, @added);
+    ok() if $opt{ok};		# may exit
     return 0;
 }
 
@@ -799,16 +811,23 @@ sub edit {
     my $editor = $ENV{WINEDITOR} || $ENV{VISUAL} || $ENV{EDITOR} ||
 						    (MSWIN ? 'notepad' : 'vi');
     # Handle -dir/-rec/etc
-    $co->args(AutoCheckedOut($co->args)) if grep /^-(?:dir|rec|all|avo)/, @ARGV;
-    my $ed = $co->clone->prog([$editor]);
+    if (grep /^-(?:dir|rec|all|avo)/, @ARGV) {
+	$co->args(grep -f, AutoCheckedOut($co->args));
+    }
+    my $ed = Argv->new;
+    $ed->prog($editor);
+    $ed->args($co->args);
     $co->args(grep !-w, $co->args);
     $co->opts('-nc', $co->opts);
     $co->autofail(1)->system if $co->args;
-    $ed->system('-');
+    # Run the editor, check return code.
+    $ed->system;
     exit $? unless $opt{'ci'};
-    # Use the wrapper for checkin in case of special flags.
-    $ed->optsCI('-revert') unless $ed->optsCI;
-    $ed->prog([$^X, '-S', $0, 'ci'])->exec('CI');
+    my $ci = Argv->new([$^X, '-S', $0, 'ci']);
+    $ci->opts($co->optsCI);
+    $ci->opts('-revert') unless $ci->opts;
+    $ci->args($ed->args);
+    $ci->exec;
 }
 
 =item * GREP
@@ -1043,11 +1062,7 @@ sub mkelem {
     @vps = grep !/(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)$/, @vps;
     ShowFound(@vps);
     exit 0 unless @vps;
-    if ($opt{ok}) {
-	print "Continue? [yes] ";
-	chomp(my $resp = <STDIN>);
-	exit 0 if $resp && $resp !~ /^y/i;
-    }
+    ok() if $opt{ok};		# may exit
 
     my $ct = ClearCase::Argv->new({-autofail=>1});
 
@@ -1324,7 +1339,6 @@ sub mount {
     die Msg('E', qq(Extra arguments: "@{[$mount->args]}"))
 						if $mount->args && $opt{all};
     my @tags = $mount->args;
-    for (@tags) { s%[/\\]%\\\\%g }	# VOB tags are /-vs-\ sensitive
     my $lsvob = ClearCase::Argv->lsvob(@tags);
     # The set of all known public VOBs.
     my @public = grep /\spublic\b/, $lsvob->qx;
@@ -1470,10 +1484,10 @@ Adds a B<-clone> flag which lets you specify another view from which to copy
 the config spec.
 
 Adds a B<-sync> flag. This is similar to B<-current> except that it
-analyzes the view dependencies and only flushes the view cache if the
+analyzes the CS dependencies and only flushes the view cache if the
 I<compiled_spec> file is out of date with respect to the I<config_spec>
-source file or any file it includes. In other words: B<-sync> is to
-B<-curr> as C<make foo.o> is to C<cc -c foo.c>.
+source file or any file it includes. In other words: B<setcs -sync> is
+to B<setcs -current> as B<make foo.o> is to B<cc -c foo.c>.
 
 Adds a B<-expand> flag, which "flattens out" the config spec by
 inlining the contents of any include files.
@@ -1574,6 +1588,8 @@ sub workon {
     # Hack - assume presence of $ENV{_} means we came from a UNIX-style
     # shell (e.g. MKS on Windows) so set quoting accordingly.
     my $cmd_exe = (MSWIN && !$ENV{_});
+    # Hack - make sure the setview isn't run in CtCmd mode.
+    delete $ENV{CLEARCASE_ARGV_CTCMD};
     Argv->new($^X, '-S', $0, 'setview', @sv_argv)->autoquote($cmd_exe)->exec;
 }
 
@@ -1727,7 +1743,7 @@ The B<"-flist -"> flag can be used to read the file list from stdin.
 =cut
 
 sub winkout {
-    warn Msg('E', "if you can get this working on &%@# Windows you're a better programmer than me!") if MSWIN;
+    warn Msg('E', "if you can get this working on &%@# Windows you're a better programmer than I am!") if MSWIN;
     my %opt;
     GetOptions(\%opt, qw(directory recurse all avobs flist=s
 					do meta=s print promote));
@@ -1835,7 +1851,10 @@ As a convenience feature, the B<-M> flag runs all output through your
 pager. Of course C<"ct lsh -M foo"> saves only a few keystrokes over
 "ct lsh foo | more" but for heavy users of shell history the more
 important feature is that it preserves the value of ESC-_ (C<ksh -o
-vi>) or !$ (csh).
+vi>) or !$ (csh). The CLEARCASE_WRAPPER_PAGER EV has the same effect.
+
+This may not work on Windows, though it's possible that a sufficiently
+modern Perl build and a smarter pager than I<more.com> will work.
 
 =item * -me -tag
 

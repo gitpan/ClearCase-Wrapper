@@ -55,3 +55,8 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Added checkout -dir/-rec. It was in an old rev and I was
 	  asked to put it back.
 	- Added mkelem -ok
+
+0.25 Thu Sep 20 15:42:01 EDT 2001
+	- Various minor tweaks.
+	- Added CLEARCASE_WRAPPER_PAGER to go with -M.
+	- Added recheckout ('ct reco') feature.
