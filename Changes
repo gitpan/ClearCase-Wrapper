@@ -105,3 +105,7 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Moved help code into ClearCase::Wrapper module from
 	  cleartool.plx. Simpler, cleaner, and now 'ct help'
 	  shows extensions.
+
+1.06 Fri Mar  1 11:05:58 EST 2002
+	- Fixed a couple of minor bugs with 'ct help' code
+	  introduced in 1.05.

@@ -42,7 +42,8 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 	*ClearCase::Wrapper::ctqx = \&ClearCase::Argv::ctqx;
     }
     # Convert "ct <cmd> -h" to "ct help <cmd>" for simplicity.
-    @ARGV = ('help', $ARGV[0]) if grep(/^-h(elp)?$/, @ARGV);
+    @ARGV = ('help', $ARGV[0])
+			    if $ARGV[0] ne 'help' && grep(/^-h(elp)?$/, @ARGV);
     # Call the override subroutine ...
     no strict 'refs';
     my $cmd = "ClearCase::Wrapper::$ARGV[0]";

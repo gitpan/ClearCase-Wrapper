@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.05';
+$VERSION = '1.06';
 
 require 5.006;
 
@@ -374,8 +374,8 @@ sub Assert {
     return if $assertion;
     (my $op = (caller(1))[3]) =~ s%.*:%%;
     no strict 'refs';
-    my $str = ${$op};
-    my $star = '*' unless Native($op);
+    my $str = ${$op} || $op;
+    my $star = '*' if !Native($op);
     print STDERR "Usage: $star$str\n";
     exit 1;
 }
@@ -800,9 +800,9 @@ sub edit {
 
 # No POD for this one because no options (same as native variant).
 sub help {
-    my $ct = ClearCase::Argv->new;
-    my @text = $ct->argv(@ARGV)->qx;
-    Assert(@ARGV < 3);
+    my @text = ClearCase::Argv->new(@ARGV)->stderr(0)->qx;
+    # Let cleartool handle any malformed requests.
+    return 0 if @ARGV > 2;
     if (@ARGV == 2) {
 	my $op = $ARGV[1];
 	if (Extension($op)) {
