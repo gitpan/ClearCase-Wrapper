@@ -1,4 +1,19 @@
 use ExtUtils::MakeMaker;
+use File::Basename;
+use File::Find;
+
+# The upgrade from 0.25 to 1.00 is cleaner if the old version is uninstalled.
+# Try to catch that situation here.
+my $cnt = 0;
+sub wanted {
+    return unless /^Burrow.al$/;
+    my $d = dirname($File::Find::name);
+    return unless $d =~ /Wrapper/;
+    return if $cnt++;
+    warn qq(Warning: found old version in $d/....
+Remove before 'make install' - see README.upgrade for details.\n);
+}
+find(\&wanted, @INC);
 
 # Explain a little background at install time.
 print q(
@@ -21,8 +36,7 @@ print q(
 
 );
 
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile.
+# The regular stuff.
 WriteMakefile(
     'NAME'		=> 'ClearCase::Wrapper',
     'VERSION_FROM'	=> 'Wrapper.pm', # finds $VERSION

@@ -15,7 +15,11 @@ BEGIN {
     # These are autoloaded and thus fairly cheap to read in
     # even though there's lots of code inside.
     if (!$ENV{CLEARCASE_WRAPPER_NATIVE}) {
-	require ClearCase::Wrapper;
+	eval { require ClearCase::Wrapper; };
+	if ($@) {
+	    (my $msg = $@) =~ s%\s*\(.*%!%;
+	    warn "$prog: Warning: $msg";
+	}
     }
 }
 
