@@ -28,12 +28,12 @@ BEGIN {
     }
 }
 
-$VERSION = '0.15';
+$VERSION = '0.16';
 
 use strict;
 
 use vars qw($prog $libdir);
-$prog = (split m%[/\\]+%, $0)[-1];
+$prog = $ENV{CLEARCASE_WRAPPER_PROG} || (split m%[/\\]+%, $0)[-1];
 
 # A list of users who are exempt from certain restrictions.
 my @Admins = qw(vobadm);
@@ -87,6 +87,7 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 {
    local $^W = 0;
    no strict 'vars';
+   # Real cleartool commands, wrapped.
    $catcs = "\n* [-cmnt|-expand|-sources|-start]";
    $checkin = "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
    $diff = "\n* [-<n>] [-dir|-rec|-all|-avobs]";
@@ -95,16 +96,20 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
    $lsview = "* [-me]";
    $mkelem = "\n* [-dir|-rec]";
    $mklabel = "\n* [-up]";
-   $setcs = "* [-expand] [-sync]";
+   $mkview = "\n* [-me] [-clone] [-local]";
+   $setcs = "\n\t     * [-clone view-tag] [-expand] [-sync]";
    $setview = "* [-me] [-drive drive:] [-persistent]";
    $uncheckout = "* [-nc]";
    $winkin = "\n* [-vp] [-tag view-tag]";
-   $comment = "$ARGV[0] [-new] object-selector ...";
-   $edattr = "$ARGV[0] object-selector ...";
-   $edit = "$ARGV[0] <co-flags> [-ci] <ci-flags> pname ...";
-   $grep = "$ARGV[0] [grep-flags] pattern element";
-   $winkout = "$ARGV[0] [-all] [-promote] [-meta file] file ...";
-   $workon = "$ARGV[0] [-me] [-login] [-exec command-invocation] view-tag\n";
+   # Pseudo cleartool commands, implemented here.
+   local $0 = $ARGV[0] || '';
+   $comment = "$0 [-new] object-selector ...";
+   $edattr = "$0 object-selector ...";
+   $edit = "$0 <co-flags> [-ci] <ci-flags> pname ...";
+   $grep = "$0 [grep-flags] pattern element";
+   $winkout = "$0 [-dir|-rec|-all] [-f file] [-pro/mote] [-do]
+		[-meta file [-print] file ...";
+   $workon = "$0 [-me] [-login] [-exec command-invocation] view-tag\n";
 }
 
 #############################################################################
@@ -112,6 +117,7 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 #############################################################################
 *ci = *checkin;
 *lsp = *lsprivate;
+*lspriv = *lsprivate;
 *unco = *uncheckout;
 *mkbrtype = *mklbtype;	# obviously not synonyms but the code's the same
 *edcmnt = *comment;
@@ -119,7 +125,7 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 # Allow per-user configurability. Give the individual access to @ARGV just
 # before we hand it off to the local wrapper function and/or cleartool.
 # Access to this feature is suppressed if the 'no_overrides' file exists.
-if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/no_overrides") {
+if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
     require "$ENV{HOME}/.clearcase_profile.pl";
 }
 
@@ -341,8 +347,8 @@ Since checkin is such a common operation, an unadorned I<ci> is
 =cut
 
 sub checkin {
-    # Allows 'ct ci' to be shorthand for 'ct ci -diff -all'.
-    push(@ARGV, qw(-diff -all)) if @ARGV == 1;
+    # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -all'.
+    push(@ARGV, qw(-diff -revert -all)) if @ARGV == 1;
 
     my %opt;
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
@@ -446,12 +452,15 @@ Extended to handle the B<-dir/-rec/-all/-avobs> flags.
 
 Improved default: if given just one element and no flags, assume B<-pred>.
 
-Extended to implement B<-<n>>, where I<<n>> is an integer requesting
-that the diff take place against the I<n>'th predecessor.
+Extended to implement B<-n>, where I<n> is an integer requesting that
+the diff take place against the I<n>'th predecessor.
 
 =cut
 
 sub diff {
+    # Allows 'ct diff' to be shorthand for 'ct diff -all'.
+    push(@ARGV, qw(-all)) if @ARGV == 1;
+
     my $limit = 0;
     if (my @num = grep /^-\d+$/, @ARGV) {
 	@ARGV = grep !/^-\d+$/, @ARGV;
@@ -588,13 +597,15 @@ the element back in afterwards. When B<-ci> is used in conjunction with
 B<-diff> the file will be either checked in or un-checked out depending
 on whether it was modified.
 
-The aggregation flags I<-dir/-rec/-all/-avo> may be used, with the
+The aggregation flags B<-dir/-rec/-all/-avo> may be used, with the
 effect being to run the editor on all checked-out files in the named
 scope. Example: I<"ct edit -all">.
 
 =cut
 
 sub edit {
+    # Allows 'ct edit' to be shorthand for 'ct edit -all'.
+    push(@ARGV, qw(-all)) if @ARGV == 1;
     my %opt;
     # -c999 isn't a real flag, it's there to disambiguate -c vs -ci
     GetOptions(\%opt, qw(ci c999)) if grep /^-ci$/, @ARGV;
@@ -621,9 +632,9 @@ sub edit {
 New command. Greps through past revisions of a file for a pattern, so
 you can see which revision introduced a particular function or a
 particular bug. By analogy with I<lsvtree>, I<grep> searches only
-"interesting" versions unless C<-all> is specified.
+"interesting" versions unless B<-all> is specified.
 
-Flags C<-nnn> are accepted where I<nnn> represents the number of versions
+Flags B<-nnn> are accepted where I<nnn> represents the number of versions
 to go back. Thus C<grep -1 foo> would search only the predecessor.
 
 =cut
@@ -648,8 +659,8 @@ sub grep {
 
 =item * LOCK
 
-New B<-allow> and B<-deny> flags. These work like C<-nuser> but operate
-incrementally on an existing C<-nuser> list rather than completely
+New B<-allow> and B<-deny> flags. These work like B<-nuser> but operate
+incrementally on an existing B<-nuser> list rather than completely
 replacing it.
 
 =cut
@@ -688,10 +699,13 @@ sub lock {
 Extended to recognize B<-dir/-rec/-all/-avobs>.  Also allows a
 directory to be specified such that 'ct lsprivate .' restricts output
 to the cwd, etc. This directory arg may be used in combination with
-C<-dir> etc. Output in these cases is relative to the current or
+B<-dir> etc. Output in these cases is relative to the current or
 specified directory if the B<-rel/ative> flag is used.
 
 The flag B<-type d|f> is also supported with the usual semantics.
+
+The flag B<-visible> flag removes files not currently visible in the
+view.
 
 The B<-ext> flag sorts the output by extension.
 
@@ -699,7 +713,8 @@ The B<-ext> flag sorts the output by extension.
 
 sub lsprivate {
     my %opt;
-    GetOptions(\%opt, qw(directory recurse all avobs ext relative type=s));
+    GetOptions(\%opt, qw(directory recurse all avobs
+						ext relative type=s visible));
 
     my $lsp = ClearCase::Argv->new(@ARGV);
     $lsp->parse(qw(co|do|other|short|long tag|invob=s));
@@ -711,7 +726,7 @@ sub lsprivate {
 	chomp(($pname) = $lsp->args);
 	$lsp->args;
 	# Default to -rec but accept -dir.
-	$opt{recurse} = !$opt{directory} unless $opt{all} || $opt{avobs};
+	$opt{recurse} = 1 unless $opt{directory} || $opt{all} || $opt{avobs};
     }
 
     # Extension: implement [-dir|-rec|-all|-avobs]
@@ -732,6 +747,7 @@ sub lsprivate {
 	} elsif (!$tag) {
 	    $tag = ViewTag();
 	}
+	$lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
 	chomp(my @privs = sort $lsp->qx);
 	exit $? if $? || !@privs;
 	for (@privs) {
@@ -744,6 +760,7 @@ sub lsprivate {
 	@privs = map {$_ eq $dir ? "$_/" : $_} @privs;
 	my $action = $opt{relative} ? 'map ' : 'grep ';
 	$action .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
+	$opt{type} ||= 'e' if $opt{visible};
 	$action = "grep {-$opt{type}} $action" if $opt{type};
 	my @results;
 	eval qq(\@results = $action \@privs);
@@ -790,7 +807,7 @@ Extended to handle the B<-dir/-rec> flags, enabling automated mkelems
 with otherwise the same syntax as original. Directories are also
 automatically checked out as required in this mode. B<Note that this
 automatic directory checkout is only enabled when the candidate list is
-derived via the C<-dir/-rec> flags>.  If the B<-ci> flag is present,
+derived via the B<-dir/-rec> flags>.  If the B<-ci> flag is present,
 any directories automatically checked out are checked back in too.
 
 =cut
@@ -871,7 +888,7 @@ sub mkelem {
 
 =item * MKLABEL
 
-The new B<-up> flag, when combined with I<-recurse>, also labels the parent
+The new B<-up> flag, when combined with B<-recurse>, also labels the parent
 directories of the specified I<pname>s all the way up to their vob tags.
 
 =cut
@@ -947,9 +964,9 @@ Extended in the following ways:
 
 =over 4
 
-=item 1. New I<-me> flag
+=item 1. New B<-me> flag
 
-Supports the I<-me> flag to prepend $LOGNAME to the view name,
+Supports the B<-me> flag to prepend $LOGNAME to the view name,
 separated by an underscore. This enables the convention that all user
 views be named B<E<lt>usernameE<gt>_E<lt>whateverE<gt>>.
 
@@ -960,16 +977,16 @@ name. Thus a user can simply type B<"mkview -me -tag foo"> and the view
 will be created as E<lt>usernameE<gt>_foo with the view storage placed
 in a default location determined by the sysadmin.
 
-=item 3. New I<-local> flag
+=item 3. New B<-local> flag
 
 By default, views are placed in a standard path on a standard
 well-known view server.  Of course, the sophisticated user may specify
 any view-storage location explicitly, taking responsibility for getting
 the -host/-hpath/-gpath triple right. However, for simplicity a
-I<-local> flag is also supported which will attempt to place the view
+B<-local> flag is also supported which will attempt to place the view
 in a standard place on the local machine if such a place exists.
 
-=item 4. New I<-clone> flag
+=item 4. New B<-clone> flag
 
 This allows you to specify another view from which to copy the config
 spec and other properties. Note that it does I<not> copy view-private
@@ -1100,12 +1117,12 @@ sub mkview {
 ClearCase 4.0 for Windows completely removes I<setview> functionality,
 but this wrapper emulates it by attaching the view to a drive letter
 and cd-ing to that drive. It supports all the flags I<setview> for
-CC 3.2.1/Windows supported (C<-drive>, C<-exec>, etc.) and adds a
-new one: C<-persistent>.
+CC 3.2.1/Windows supported (B<-drive>, B<-exec>, etc.) and adds a
+new one: B<-persistent>.
 
 If the view is already mapped to a drive letter that drive is used.
 If not, the first available drive working backwards from Z: is used.
-Without C<-persistent> a drive mapped by setview will be unmapped
+Without B<-persistent> a drive mapped by setview will be unmapped
 when the setview process is existed.
 
 The setview emulation sets I<CLEARCASE_ROOT> for compatibility and adds
@@ -1122,7 +1139,15 @@ sub setview {
     my %opt;
     GetOptions(\%opt, qw(exec=s drive=s login ndrive persistent));
     Argv->inpathnorm(0);	# must suppress this for options like /del
-    $opt{exec} ||= $ENV{SHELL} || $ENV{COMSPEC} || 'cmd.exe';
+    {
+	# This hack seems necessary to support $(shell ...) in clearmake
+	# under MKS 6.2. Don't know why, something to do with the
+	# typeset -I COMSPEC in environ.ksh?
+	my $comspec = $ENV{ComSpec} || $ENV{COMSPEC};
+	delete $ENV{COMSPEC};
+	($ENV{ComSpec} = $comspec) =~ s%\\%/%g;
+    }
+    $opt{'exec'} ||= $ENV{SHELL} || $ENV{ComSpec} || 'cmd.exe';
     my $vtag = $ARGV[-1];
     my @used = grep /\w:\s+\\\\/, Argv->new(qw(net use))->qx;
     my @views = grep /\s+\\\\view\\$vtag\b/, grep !/unavailable/i, @used;
@@ -1160,20 +1185,23 @@ sub setview {
     $ENV{CLEARCASE_VIEWDRIVE} = $ENV{VD} = $drive;
     delete $ENV{LOGNAME};
     if ($mounted && !$opt{persistent}) {
-	my $rc = Argv->new($opt{exec})->system;
+	my $rc = Argv->new($opt{'exec'})->system;
 	Argv->new(qw(net use), $drive, '/delete')->system;
 	exit $rc;
     } else {
-	Argv->new($opt{exec})->exec;
+	Argv->new($opt{'exec'})->exec;
     }
 }
 
 =item * SETCS
 
+Adds a B<-clone> which lets you specify another view from which to copy
+the config spec.
+
 Adds a B<-sync> flag. This is similar to B<-current> except that it
 analyzes the view dependencies and only flushes the view cache if the
 compiled_spec is out of date with respect to the I<config_spec> source
-file or a file it includes. In other words: C<-sync> is to C<-curr> as
+file or a file it includes. In other words: B<-sync> is to B<-curr> as
 C<make foo.o> is to C<cc -c foo.c>.
 
 Adds a B<-expand> flag, which "flattens out" the config spec by
@@ -1183,10 +1211,10 @@ inlining the contents of any include files.
 
 sub setcs {
     my %opt;
-    GetOptions(\%opt, qw(expand sync));
+    GetOptions(\%opt, qw(clone=s expand sync));
     die Msg('E', "-expand and -sync are mutually exclusive")
 					    if $opt{expand} && $opt{sync};
-    my $tag = ViewTag() if $opt{expand} || $opt{sync};
+    my $tag = ViewTag() if $opt{expand} || $opt{sync} || $opt{clone};
     if ($opt{expand}) {
 	my $ct = Argv->new([$^X, '-S', $0]);
 	my $settmp = ".$prog.setcs.$$";
@@ -1208,6 +1236,15 @@ sub setcs {
 						    if (stat $_)[9] > $otime;
 	}
 	exit 1;
+    } elsif ($opt{clone}) {
+	my $ct = ClearCase::Argv->new;
+	my $ctx = $ct->cleartool;
+	my $cstmp = ".$ARGV[0].$$.cs.$tag";
+	Argv->autofail(1);
+	Argv->new("$ctx catcs -tag $opt{clone} > $cstmp")->system;
+	$ct->setcs('-tag', $tag, $cstmp)->system;
+	unlink($cstmp);
+	exit 0;
     }
 }
 
@@ -1254,7 +1291,7 @@ sub workon {
     }
     # Last, run the setview cmd we've so laboriously constructed.
     unshift(@ARGV, '_inview');
-    push(@ARGV, '-_exec', qq("$sv_opt{exec}")) if $sv_opt{exec};
+    push(@ARGV, '-_exec', qq("$sv_opt{'exec'}")) if $sv_opt{'exec'};
     push(@sv_argv, '-exec', "$^X -S $0 @ARGV", $tag);
     # Prevent \'s from getting lost in subsequent interpolation.
     for (@sv_argv) { s%\\%/%g }
@@ -1335,7 +1372,7 @@ sub uncheckout {
 The B<-tag> flag allows you specify a local file path plus another view;
 the named DO in the named view will be winked into the current view.
 
-The B<-vp> flag, when used with I<-tag>, causes the "remote" file to be
+The B<-vp> flag, when used with B<-tag>, causes the "remote" file to be
 converted into a DO if required before winkin is attempted. See the
 B<winkout> extension for details.
 
@@ -1375,86 +1412,123 @@ arguments and, using clearaudit, makes them into derived objects. The
 config records generated are meaningless but the mere fact of being a
 DO makes a file eligible for forced winkin.
 
-If the C<-promote> flag is given, the view scrubber will be run on the
+If the B<-promote> flag is given, the view scrubber will be run on the
 new DO's. This has the effect of promoting them to the VOB and winking
 them back into the current view.
 
-If a meta-DO filename is specified with C<-meta>, this file is created
-as a DO and caused to reference all the other named files. This defines
-a I<DO set> and allows the entire set to be winked in using the meta-DO
+If a meta-DO filename is specified with B<-meta>, this file is created
+as a DO and caused to reference all the other new DO's, thus defining a
+I<DO set> and allowing the entire set to be winked in using the meta-DO
 as a hook. E.g. assuming view-private files X, Y, and Z already exist:
 
-	<ct-context> winkout -meta foo X Y Z
+	ct winkout -meta .WINKIN X Y Z
 
-will make them into derived objects and create a 4th DO "foo"
+will make them into derived objects and create a 4th DO ".WINKIN"
 containing references to the others. A subsequent
 
-	cleartool winkin -recurse /view/extended/path/to/foo
+	ct winkin -recurse -adirs /view/extended/path/to/.WINKIN
 
 from a different view will wink all four files into the current view.
+
+Accepts B<-dir/-rec/-all/-avobs>, a file containing a list of files
+with B<-flist>, or a literal list of view-private files. When using
+B<-dir/-rec/-all/-avobs> to derive the file list only the output of
+C<lsprivate -other> is considered unless B<-do> is used; B<-do> causes
+existing DO's to be re-converted.
+
+The B<"-flist -"> flag can be used to read the file list from stdin.
 
 =cut
 
 sub winkout {
+    warn Msg('E', "if you can get this working on &%@# Windows you're a better programmer than me!") if MSWIN;
     my %opt;
-    GetOptions(\%opt, qw(all meta=s promote));
+    GetOptions(\%opt, qw(directory recurse all avobs flist=s
+					do meta=s print promote));
     my $ct = ClearCase::Argv->new({-autochomp=>1, -syfail=>1});
-    my $clearaudit = '/usr/atria/bin/clearaudit';
-    my $scrubber = MSWIN ? 'view_scrubber' : '/usr/atria/etc/view_scrubber';
 
-    if (!$ENV{CLEARAUDIT_SHELL}) {
-	my $cmd = shift @ARGV;
-	my %set;
-	if ($opt{all}) {
-	    %set = map {$_ => 1} $ct->lsp([qw(-other -s)])->qx;
+    my $dbg = Argv->dbglevel;
+
+    my $cmd = shift @ARGV;
+    my @list;
+    if (my @scope = grep /^(dir|rec|all|avo|f)/, keys %opt) {
+	die Msg('E', "mutually exclusive flags: @scope") if @scope > 1;
+	if ($opt{flist}) {
+	    open(LIST, $opt{flist}) || die Msg('E', "$opt{flist}: $!");
+	    @list = <LIST>;
+	    close(LIST);
 	} else {
-	    %set = map {$_ => 1} @ARGV;
+	    my @type = $opt{do} ? qw(-other -do) : qw(-other);
+	    @list = Argv->new([$^X, '-S', $0, 'lsp'],
+		    ['-s', @type, "-$scope[0]"])->qx;
 	}
-	exit 0 if ! %set;
-	# Shared DO's should be g+w!
-	Argv->new('chmod', 'ug+rw', keys %set)->stderr(0)->system if !MSWIN;
-	(my $ext = scalar localtime) =~ s%\s+%_%g;
-	$ENV{CLEARAUDIT_SHELL} = '/bin/sh' if !MSWIN;
-	$ca = Argv->new('clearaudit', ['-c']);
-	for (keys %set) {
-	    my $lnk = "$_.$ext";
-	    rename($_, $lnk) || die "$_: $!";
-	    $ca->args(qq(cp -p "$lnk" "$_"))->system;
-	    unlink $lnk;
-	}
-	if ($opt{meta}) {
-	    if (-f $opt{meta}) {
-		open(META, $opt{meta}) || die "$opt{meta}: $!";
-		chomp(my @prev = grep !/^#/, <META>);
-		for (@prev) { $set{$_} = 1 }
-		close(META);
-	    }
-	    local $ENV{CLEARAUDIT_SHELL} = $^X;
-	    $ca->argv('clearaudit', [$^X, '-S', $0, $cmd, '-meta', $opt{meta}],
-							sort keys %set)->system;
-	}
-	if ($opt{promote}) {
-	    open(SCRUBBER, "| $scrubber -p") || die "$scrubber: $!";
-	    local $\ = "\n";
-	    print SCRUBBER sort keys %set;
-	    print SCRUBBER $opt{meta} if $opt{meta};
-	    close(SCRUBBER) || die $! ? "Error closing $scrubber pipe: $!" :
-				    "Exit status $? from $scrubber";
-	}
-	exit 0;
     } else {
-	my $rc = 0;
-	open(META, ">$opt{meta}") || die "$opt{meta}: $!";
-	for my $vp (@ARGV) {
-	    if (!defined(-B $vp)) {
-		warn "Warning: $vp: $!";
-		$rc++;
-	    }
-	    print META $vp, "\n";
-	}
-	close(META);
-	exit $rc;
+	@list = @ARGV;
     }
+    chomp @list;
+    my %set = map {$_ => 1} grep {-f}
+		    grep {!m%\.(?:mvfs|nfs)\d+|cmake\.state%} @list;
+    exit 0 if ! %set;
+    if ($opt{'print'}) {
+	for (keys %set) {
+	    print $_, "\n";
+	}
+	print $opt{meta}, "\n" if $opt{meta};
+	exit 0;
+    }
+    # Shared DO's should be g+w!
+    (my $egid = $)) =~ s%\s.*%%;
+    for (keys %set) {
+	my($mode, $uid, $gid) = (stat($_))[2,4,5];
+	if (!defined($mode)) {
+	    warn Msg('W', "no such file: $_");
+	    delete $set{$_};
+	    next;
+	}
+	next if $uid != $> || ($mode & 0222) || ($mode & 0220 && $gid == $egid);
+	#print STDERR "+ chmod ug+w $_\n" if $dbg;
+	chmod(($mode & 07777) | 0220, $_);
+    }
+    my @dolist = sort keys %set;
+    # Add the -meta file to the list of DO's if specified.
+    if ($opt{meta}) {
+	if ($dbg) {
+	    my $num = @dolist;
+	    print STDERR "+ associating $num files with $opt{meta} ...\n";
+	}
+	open(META, ">$opt{meta}") || die Msg('E', "$opt{meta}: $!");
+	for (@dolist) { print META $_, "\n" }
+	close(META);
+	push(@dolist, $opt{meta});
+    }
+    # Convert regular view-privates into DO's by opening them
+    # under clearaudit control.
+    {
+	my $clearaudit = '/usr/atria/bin/clearaudit';
+	local $ENV{CLEARAUDIT_SHELL} = $^X;
+	my $ecmd = 'chomp; open(DO, ">>$_") || warn "Error: $_: $!\n"';
+	my $cmd = qq($clearaudit -n -e '$ecmd');
+	$cmd = "set -x; $cmd" if $dbg;
+	open(AUDIT, "| $cmd") || die Msg('E', "$cmd: $!");
+	for (@dolist) {
+	    print AUDIT  $_, "\n";
+	    print STDERR $_, "\n" if $dbg;
+	}
+	close(AUDIT) || die Msg('E', $! ?
+				"Error closing clearaudit pipe: $!" :
+				"Exit status @{[$?>>8]} from clearaudit");
+    }
+    if ($opt{promote}) {
+	my $scrubber = '/usr/atria/etc/view_scrubber';
+	my $cmd = "$scrubber -p";
+	$cmd = "set -x; $cmd" if $dbg;
+	open(SCRUBBER, "| $cmd") || die Msg('E', "$scrubber: $!");
+	for (@dolist) { print SCRUBBER $_, "\n" }
+	close(SCRUBBER) || die Msg('E', $! ?
+				"Error closing $scrubber pipe: $!" :
+				"Exit status $? from $scrubber");
+    }
+    exit 0;
 }
 
 =back
@@ -1508,9 +1582,12 @@ EV.
 
 =head1 INSTALLATION
 
-Install the I<cleartool.plx> file as I<ct> or whatever short name you
-prefer.  Unfortunately, there's no equivalent mechanism for wrapping
-GUI access to clearcase.
+I recommend you install the I<cleartool.plx> file to some global dir
+(e.g. /usr/local/bin), then symlink it to I<ct> or whatever short name
+you prefer.  Unfortunately, there's no equivalent mechanism for
+wrapping GUI access to clearcase. For Windows the strategy is similar
+but requires a "ct.bat" file instead of a symlink. See "ct.bat.sample"
+in the distribution.
 
 To install or update a global enhancement you must re-run "make
 install".  Also, don't forget to check that the contents of

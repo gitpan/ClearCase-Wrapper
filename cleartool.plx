@@ -56,6 +56,5 @@ if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
     ClearCase::Argv->new(@ARGV)->exec;
 } else {
     die "Error: no ClearCase on this system!\n" unless -d '/usr/atria';
-    exec('/usr/atria/bin/cleartool', @ARGV);
-    exit $?;
+    exec('/usr/atria/bin/cleartool', @ARGV) && exit $?;
 }
