@@ -61,11 +61,35 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Added CLEARCASE_WRAPPER_PAGER to go with -M.
 	- Added recheckout ('ct reco') feature.
 
-0.26 Wed Jan 30 09:03:16 EST 2002
-	- RETIRING the 0.* line of ClearCase::Wrapper. There's
-	  a rewritten version starting at 1.00. This version
-	  (0.26) is being only to remove the old Site.pm
-	  functionality from the old line because it can
-	  confuse CPAN users attempting to get to the new
-	  code. If you download this version, don't use it.
-	  Use the latest instead.
+0.26 Mon Dec 17 13:11:52 EST 2001
+	- Optimizations in 'ct lsp -dir|-rec' using -invob
+	- Improve -ok prompting so it works better in a GUI environment.
+	  This adds ClearCase::ClearPrompt to the set of required modules.
+	- Add -ok functionality to unco.
+	- Fix bug(s) in "ct co -dir/-rec".
+	- Allow "ct mkelem -dir/-rec" to be run in a view-private dir.
+	  It will traverse 'up' towards the vob root looking for a
+	  versioned dir to work from.
+	- Added -P (pause) flag (see README.GUI for why).
+
+1.01 Fri Jan 25 09:35:11 EST 2002
+	- *COMPATIBILITY ALERT*
+	  With this release the infrastructure is largely rewritten
+	  to make customizations/extensions easier to write and
+	  maintain. The old Site.pm hack is gone. In its place
+	  are "overlay modules". See the README and the POD in
+	  Wrapper.pm for details, but basically this makes it much
+	  easier to write (and potentially contribute) new features.
+
+	  *NOTE* If upgrading from a version <1.00, you should manually
+	  uninstall the old version.  See README.upgrade for details.
+	  The Makefile.PL has some code to try to warn you about this
+	  situation.
+
+1.02 Sun Jan 27 13:54:17 EST 2002
+	- Added README.upgrade and some upgrade help in
+	  Makefile.PL.
+	- Add some protection from mis-installed Wrapper.pm.
+
+1.03 Thu Jan 31 11:18:49 EST 2002
+	- Added Assert() function to aid extension writers.
