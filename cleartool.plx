@@ -11,7 +11,7 @@ local $Getopt::Long::ignorecase = 0;  # global override for dumb default
 
 # If Wrapper.pm defines an AutoLoad-ed subroutine to handle $ARGV[0], call it.
 # This subroutine may or may not return.
-if (defined $ClearCase::Wrapper::{$ARGV[0]}) {
+if (@ARGV && defined $ClearCase::Wrapper::{$ARGV[0]}) {
     require ClearCase::Argv;
     ClearCase::Argv->inpathnorm(0);
     ClearCase::Argv->attropts;
@@ -55,5 +55,7 @@ if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
     ClearCase::Argv->attropts;
     ClearCase::Argv->new(@ARGV)->exec;
 } else {
+    die "Error: no ClearCase on this system!\n" unless -d '/usr/atria';
     exec('/usr/atria/bin/cleartool', @ARGV);
+    exit $?;
 }

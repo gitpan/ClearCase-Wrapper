@@ -13,3 +13,8 @@ Revision history for Perl extension ClearCase::Wrapper.
 0.14 Fri May 12 12:13:11 EDT 2000
 	- FCS (first CPAN shipment). Some extensions tested on NT, not
 	  all.
+
+0.15 Wed May 31 17:10:08 EDT 2000
+	- Added 'lock -{allow,deny} flags.
+	- Fixed spurious warnings going into interactive mode.
+	- Added default for 'ct ci'.

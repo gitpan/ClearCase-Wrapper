@@ -28,7 +28,7 @@ BEGIN {
     }
 }
 
-$VERSION = '0.14';
+$VERSION = '0.15';
 
 use strict;
 
@@ -85,10 +85,12 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 # Usage Message Extensions
 #############################################################################
 {
+   local $^W = 0;
    no strict 'vars';
    $catcs = "\n* [-cmnt|-expand|-sources|-start]";
    $checkin = "\n* [-dir|-rec|-all|-avobs] [-diff [diff-opts]] [-revert]";
    $diff = "\n* [-<n>] [-dir|-rec|-all|-avobs]";
+   $lock = "\n* [-allow login-name[,...] [-deny login-name[,...]";
    $lsprivate = "\n* [-dir|-rec|-all] [-rel/ative] [-ext] [-type d|f] [pname]";
    $lsview = "* [-me]";
    $mkelem = "\n* [-dir|-rec]";
@@ -111,7 +113,7 @@ for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
 *ci = *checkin;
 *lsp = *lsprivate;
 *unco = *uncheckout;
-*mkbrtype = *mklbtype;	# obviously not synonyms but our code's the same
+*mkbrtype = *mklbtype;	# obviously not synonyms but the code's the same
 *edcmnt = *comment;
 
 # Allow per-user configurability. Give the individual access to @ARGV just
@@ -333,9 +335,15 @@ of only directories (since directories get a default comment).
 Implements a new B<-revert> flag. This causes identical (unchanged)
 elements to be unchecked-out instead of being checked in.
 
+Since checkin is such a common operation, an unadorned I<ci> is
+"promoted" to I<ci -diff -all> to save typing.
+
 =cut
 
 sub checkin {
+    # Allows 'ct ci' to be shorthand for 'ct ci -diff -all'.
+    push(@ARGV, qw(-diff -all)) if @ARGV == 1;
+
     my %opt;
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
     GetOptions(\%opt, qw(diff revert re999)) if grep /^-(dif|rev)/, @ARGV;
@@ -504,7 +512,7 @@ sub edattr {
 	    next unless $line =~ /\s*(\S+)\s+=\s+(.+)/;
 	    $indata{$1} = $2;
 	}
-	my $edtmp = ".$prog.comment.$$";
+	my $edtmp = ".$prog.edattr.$$";
 	open(EDTMP, ">$edtmp") || die Msg('E', "$edtmp: $!");
 	print EDTMP "# $obj (format: attr = \"val\"):\n\n" if ! keys %indata;
 	for (sort keys %indata) { print EDTMP "$_ = $indata{$_}\n" }
@@ -611,9 +619,9 @@ sub edit {
 =item * GREP
 
 New command. Greps through past revisions of a file for a pattern, so
-you can see which revision introduced a particular function or which
-introduced a particular bug. By analogy with I<lsvtree>, I<grep>
-searches only "interesting" versions unless C<-all> is specified.
+you can see which revision introduced a particular function or a
+particular bug. By analogy with I<lsvtree>, I<grep> searches only
+"interesting" versions unless C<-all> is specified.
 
 Flags C<-nnn> are accepted where I<nnn> represents the number of versions
 to go back. Thus C<grep -1 foo> would search only the predecessor.
@@ -636,6 +644,43 @@ sub grep {
 						    grep {m%/\d+$%} $lsvt->qx);
     splice(@vers, $limit) if $limit;
     Argv->new(@ARGV, @vers)->dbglevel(1)->exec;
+}
+
+=item * LOCK
+
+New B<-allow> and B<-deny> flags. These work like C<-nuser> but operate
+incrementally on an existing C<-nuser> list rather than completely
+replacing it.
+
+=cut
+
+sub lock {
+    my %opt;
+    GetOptions(\%opt, qw(allow=s deny=s));
+    return 0 unless %opt;
+    my $lock = ClearCase::Argv->new(@ARGV);
+    $lock->parse(qw(c|cfile=s c|cquery|cqeach nusers=s
+						    pname=s obsolete replace));
+    die Msg('E', "cannot specify -nusers along with -allow or -deny")
+					if $lock->flag('nusers');
+    die Msg('E', "cannot use -allow or -deny with multiple objects")
+					if $lock->args > 1;
+    my($lastlock) = grep /^Locked\s/,
+			ClearCase::Argv->lsh([qw(-fmt %c)], $lock->args)->qx;
+    if ($lastlock =~ m%^Locked except for users:\s+(.*)%) {
+	my %nusers = map {$_ => 1} split /\s+/, $1;
+	if ($opt{allow}) {
+	    for (split /,/, $opt{allow}) { $nusers{$_} = 1 }
+	}
+	if ($opt{deny}) {
+	    for (split /,/, $opt{deny}) { delete $nusers{$_} }
+	}
+	$lock->opts($lock->opts, '-nusers', join(',', sort keys %nusers))
+								    if %nusers;
+    } elsif ($opt{allow}) {
+	$lock->opts($lock->opts, '-nusers', $opt{allow});
+    }
+    $lock->dbglevel(1)->exec;
 }
 
 =item * LSPRIVATE
@@ -840,17 +885,23 @@ sub mklabel {
     my $dsc = ClearCase::Argv->new({-autochomp=>1});
     $mkl->parse(qw(replace|recurse|ci|cq|nc
 				version|c|cfile|select|type|name|config=s));
+    $mkl->syfail(1)->system;
     require File::Basename;
+    require File::Spec;
+    File::Spec->VERSION(0.8);
+    my($label, @elems) = $mkl->args;
     my %ancestors;
-    for my $pname ($mkl->args) {
+    for my $pname (@elems) {
 	my $vobtag = $dsc->desc(['-s'], "vob:$pname")->qx;
-	for (my $dad = dirname($pname);
-		    length($dad) >= length($vobtag); $dad = dirname($dad)) {
+	for (my $dad = File::Basename::dirname(File::Spec->rel2abs($pname));
+		    length($dad) >= length($vobtag);
+			    $dad = File::Basename::dirname($dad)) {
 	    $ancestors{$dad}++;
 	}
     }
-    $mkl->args($mkl->args, sort keys %ancestors) if %ancestors;
-    $mkl->exec;
+    exit(0) if !%ancestors;
+    $mkl->opts(grep !/^-r(ec)?$/, $mkl->opts);
+    $mkl->args($label, sort {$b cmp $a} keys %ancestors)->exec;
 }
 
 =item * MKBRTYPE,MKLBTYPE
@@ -1099,6 +1150,8 @@ sub setview {
 				if $taken{$drive} && $taken{$drive} ne $vtag;
 	if (! -d $drive) {
 	    $mounted = 1;
+	    local $| = 1;
+	    print "Connecting $drive to \\\\view\\$vtag ... ";
 	    Argv->new(qw(net use), $drive, "\\\\view\\$vtag", $pers)->system;
 	}
     }
@@ -1203,6 +1256,8 @@ sub workon {
     unshift(@ARGV, '_inview');
     push(@ARGV, '-_exec', qq("$sv_opt{exec}")) if $sv_opt{exec};
     push(@sv_argv, '-exec', "$^X -S $0 @ARGV", $tag);
+    # Prevent \'s from getting lost in subsequent interpolation.
+    for (@sv_argv) { s%\\%/%g }
     # Hack - assume no $SHELL EV means we're on Windows using cmd.exe
     my $dos_shell = (MSWIN && !$ENV{SHELL});
     Argv->new($^X, '-S', $0, 'setview', @sv_argv)->autoquote($dos_shell)->exec;
@@ -1401,6 +1456,8 @@ sub winkout {
 	exit $rc;
     }
 }
+
+=back
 
 =head1 CONFIGURATION
 
