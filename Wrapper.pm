@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.08';
+$VERSION = '1.09';
 
 require 5.006;
 
@@ -618,7 +618,7 @@ C<promoted> to I<ci -diff -dir -revert> to save typing.
 
 sub checkin {
     # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -dir'.
-    push(@ARGV, qw(-diff -revert -dir)) if @ARGV == 1;
+    push(@ARGV, qw(-diff -revert -dir)) if grep(!/^-pti/, @ARGV) == 1;
 
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
     # Same for -cr999.
@@ -998,7 +998,7 @@ sub mkelem {
     # Derive the list of view-private files to work on. This may exit
     # if no eligibles are found.
     my $scope = $opt{recurse} ? '-rec' : '-dir';
-    my $re = q%(?:\.(?:n|mv)fs_|\.(?:abe|cmake)\.state)$%;
+    my $re = q%(?:\.(?:n|mv)fs_\d+|\.(?:abe|cmake)\.state|\.(?:swp|tmp))$%;
     my @vps = AutoViewPrivate($opt{ok}, $opt{do}, $scope, 1, $re);
 
     my $ct = ClearCase::Argv->new({-autofail=>1});
@@ -1238,7 +1238,7 @@ to have by default.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 1997-2002 David Boyce (dsb@boyski.com). All rights
+Copyright (c) 1997-2002 David Boyce (dsbperl@cleartool.com). All rights
 reserved.  This Perl program is free software; you may redistribute it
 and/or modify it under the same terms as Perl itself.
 

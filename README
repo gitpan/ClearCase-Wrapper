@@ -2,10 +2,6 @@
 			ClearCase::Wrapper
 ========================================================================
 
-Copyright (c) 1997-2002 David Boyce (dsb@boyski.com). All rights
-reserved.  This program is free software; you can redistribute it
-and/or modify it under the same terms as Perl itself.
-
 ************************************************************************
 Note: this module is of use only to users of the ClearCase command-line
 interface tool 'cleartool', on Unix or NT systems.
@@ -18,7 +14,7 @@ This module has grown well beyond its initial design, which was
 inspired by three simple observations:
 
    1. The configurability of cleartool, as represented by
-   ~/.clearcase_profile, is badly limited. The only thing that file
+   ~/.clearcase_profile, is badly limited. The only thing it
    can affect is the default comment behavior!
 
    2. Triggers are useful but only apply to vob-object operations;
@@ -217,4 +213,4 @@ FEEDBACK
 --------
 
 Feel free to communicate bugs, suggestions, or (preferably) patches to
-dsb@boyski.com.
+me by email.

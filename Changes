@@ -116,3 +116,6 @@ Revision history for Perl extension ClearCase::Wrapper.
 
 1.08 Wed Feb  5 08:44:22 EST 2003
 	- Infrastructure: extended Assert() to take optional messages.
+
+1.09 Tue Jul 22 10:41:32 EDT 2003
+	- Fixed contact data.
