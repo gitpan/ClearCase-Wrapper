@@ -18,8 +18,8 @@ This module has grown well beyond its initial design, which was
 inspired by three simple observations:
 
    1. The configurability of cleartool, as represented by
-   ~/.clearcase_profile, is badly limited. The only thing this file
-   affects is the default comment behavior!
+   ~/.clearcase_profile, is badly limited. The only thing that file
+   can affect is the default comment behavior!
 
    2. Triggers are useful but only apply to vob-object operations;
    commands like mkview, catcs, etc are non-triggerable and must be

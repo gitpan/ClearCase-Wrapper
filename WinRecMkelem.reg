@@ -17,11 +17,11 @@ REGEDIT4
 
 [HKEY_LOCAL_MACHINE\Software\Atria\ClearCase\CurrentVersion\ContextMenus\MsExplorer\MenuTable\501]
 "Text"="Recursive Add to Source Control..."
-"HelpText"="Turn all private files under the selected dir into versioned elements"
+"HelpText"="Turn all private files under selected dir into versioned elements"
 "DoHelpSubst"="FALSE"
 "DispType"="Executable"
 "Exe"="perl"
-"Params"="-S ct mkelem -ci -nc -rec -ok -P -/ipc=2"
+"Params"="-S ct mkelem -ci -nc -rec -ok -P -/ipc=1"
 "DirParams"="$file"
 "ShowDlg"="FALSE"
 "Comment"="GUI access to 'ct mkelem'"

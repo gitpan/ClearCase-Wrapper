@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.04';
+$VERSION = '1.05';
 
 require 5.006;
 
@@ -285,6 +285,7 @@ sub Extension {
     my %native;
     sub Native {
 	my $op = shift;
+	return 1 if $op =~ m%^lsp(riv)?%;
 	if (! $op) {
 	    ($op = (caller(1))[3]) =~ s%.*:%%;
 	}
@@ -614,9 +615,15 @@ sub checkin {
     # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -dir'.
     push(@ARGV, qw(-diff -revert -dir)) if @ARGV == 1;
 
-    my %opt;
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
-    GetOptions(\%opt, qw(diff ok revert re999)) if grep /^-(dif|ok|rev)/, @ARGV;
+    # Same for -cr999.
+    my %opt;
+    GetOptions(\%opt, qw(crnum=s cr999=s diff ok revert re999))
+			if grep /^-(crn|dif|ok|rev)/, @ARGV;
+
+    # This is a hidden flag to support my checkin_post trigger.
+    # It allows the bug number to be supplied as a cmdline option.
+    $ENV{CRNUM} = $opt{crnum} if $opt{crnum};
 
     my $ci = ClearCase::Argv->new(@ARGV);
 
@@ -789,6 +796,42 @@ sub edit {
     $ci->opts('-revert') unless $ci->opts;
     $ci->args($ed->args);
     $ci->exec;
+}
+
+# No POD for this one because no options (same as native variant).
+sub help {
+    my $ct = ClearCase::Argv->new;
+    my @text = $ct->argv(@ARGV)->qx;
+    Assert(@ARGV < 3);
+    if (@ARGV == 2) {
+	my $op = $ARGV[1];
+	if (Extension($op)) {
+	    @text = ('Usage: *') if !@text;
+	    chomp $text[-1];
+	    chomp(my $msg = $$op);
+	    my($indent) = ($text[-1] =~ /^(\s*)/);
+	    substr($indent, -2, 2) = '';
+	    $msg =~ s/\n/\n$indent/gs;
+	    push(@text, $msg);
+	    print @text, "\n";
+	    exit 0;
+	} else {
+	    return 0;
+	}
+    }
+    print @text, "\n";
+    my $bars = '='x70;
+    print "$bars\n= ClearCase::Wrapper Extensions:\n$bars\n\n";
+    for (sort grep !/^_/, keys %ClearCase::Wrapper::ExtMap) {
+	next if m%^(lsp(riv)?|c.)$%;
+	$cmd = "ClearCase::Wrapper::$_";
+	my $text = $$cmd;
+	next unless $text;
+	$text =~ s%^(help)?\s+%%s;
+	my $star = ClearCase::Wrapper::Native($_) ? '' : '*';
+	print "Usage: $star$_ $text\n";
+    }
+    exit 0;
 }
 
 =item * LSPRIVATE

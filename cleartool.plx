@@ -41,33 +41,11 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 	*ClearCase::Wrapper::ctqx = \&ClearCase::Argv::ctqx;
 	*ClearCase::Wrapper::ctqx = \&ClearCase::Argv::ctqx;
     }
-    my $cmd = "ClearCase::Wrapper::$ARGV[0]";
-    no strict 'refs';
-    # This block handles "ct <cmd> -help" and "ct help <cmd>".
-    if ($ARGV[0] eq 'help' || grep /^-h(elp)?$/, @ARGV) {
-	my @help;
-	my $hlp = ClearCase::Argv->new({-stderr=>0});
-	if ($ARGV[0] eq 'help') {
-	    $cmd = "ClearCase::Wrapper::$ARGV[-1]";
-	    @help = $hlp->argv(@ARGV)->qx;
-	} else {
-	    @help = $hlp->argv($ARGV[0], '-h')->qx;
-	}
-	if (defined ${$cmd}) {
-	    @help = ('Usage: *') if !@help;
-	    chomp(my $text = $$cmd);
-	    chomp $help[-1];
-	    my($indent) = ($help[-1] =~ /^(\s*)/);
-	    substr($indent, -2, 2) = '';
-	    $text =~ s/\n/\n$indent/gs;
-	    push(@help, $text);
-	} elsif (!@help) {
-	    $hlp->stderr(2)->exec;
-	}
-	print @help, "\n";
-	exit 0;
-    }
+    # Convert "ct <cmd> -h" to "ct help <cmd>" for simplicity.
+    @ARGV = ('help', $ARGV[0]) if grep(/^-h(elp)?$/, @ARGV);
     # Call the override subroutine ...
+    no strict 'refs';
+    my $cmd = "ClearCase::Wrapper::$ARGV[0]";
     my $rc = &$cmd(@ARGV);
     # ... and exit unless it returned zero.
     exit $rc if $rc;

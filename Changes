@@ -100,3 +100,8 @@ Revision history for Perl extension ClearCase::Wrapper.
 	  within a dynamic view.
 	- Added 'ct extensions' cmd to list defined extensions
 	  and what package they come from.
+
+1.05 Fri Mar  1 10:28:25 EST 2002
+	- Moved help code into ClearCase::Wrapper module from
+	  cleartool.plx. Simpler, cleaner, and now 'ct help'
+	  shows extensions.
