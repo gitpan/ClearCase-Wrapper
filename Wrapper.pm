@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.09';
+$VERSION = '1.11';
 
 require 5.006;
 
@@ -231,9 +231,11 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    $uncheckout	= " * [-nc]";
 
    # Extended messages for pseudo cleartool commands that we implement here.
-   local $0 = $ARGV[0] || '';
-   $edit	= "$0 <co-flags> [-ci] <ci-flags> pname ...";
-   $extensions	= "$0 [-long]";
+   # Note: we used to localize $0 but that turns out to trigger a bug
+   # in perl 5.6.1.
+   my $z = $ARGV[0] || '';
+   $edit	= "$z <co-flags> [-ci] <ci-flags> pname ...";
+   $extensions	= "$z [-long]";
 }
 
 #############################################################################
@@ -299,7 +301,13 @@ sub Extension {
 		}
 	    }
 	}
-	return $native{$op};
+	if (exists($native{$op})) {
+	    return 1;
+	} elsif ($op =~ m%^(?:des|lsh)%) {
+	    return 1;
+	} else {
+	    return 0;
+	}
     }
 }
 
@@ -611,14 +619,18 @@ of only directories (since directories get a default comment).
 Implements a new B<-revert> flag. This causes identical (unchanged)
 elements to be unchecked-out instead of being checked in.
 
-Since checkin is such a common operation, an unadorned I<ci> cmd is
-C<promoted> to I<ci -diff -dir -revert> to save typing.
+Since checkin is such a common operation, a special fature is supported
+to save typing: an unadorned I<ci> cmd is C<promoted> to I<ci -dir -me
+-diff -revert>. In other words typing I<ct ci> will step through each
+file checked out by you in the current directory and view,
+automatically undoing the checkout if no changes have been made and
+showing diffs followed by a checkin-comment prompt otherwise.
 
 =cut
 
 sub checkin {
-    # Allows 'ct ci' to be shorthand for 'ct ci -diff -revert -dir'.
-    push(@ARGV, qw(-diff -revert -dir)) if grep(!/^-pti/, @ARGV) == 1;
+    # Allows 'ct ci' to be shorthand for 'ct ci -me -diff -revert -dir'.
+    push(@ARGV, qw(-me -diff -revert -dir)) if grep(!/^-pti/, @ARGV) == 1;
 
     # -re999 isn't a real flag, it's to disambiguate -rec from -rev
     # Same for -cr999.
@@ -652,6 +664,13 @@ sub checkin {
     # Default to -nc if checking in directories only.
     if (!grep(/^-c$|^-cq|^-nc$|^-cfi/, @ARGV)) {
 	$ci->opts('-nc', $ci->opts) if !grep {!-d} @elems;
+    }
+
+    # Give a warning if the file is open for editing by vim.
+    # (I know, there are lots of other editors but it just happens
+    # to be easy to detect vim by its .swp file)
+    for (@elems) {
+	die Msg('E', "$_: appears to be open in vim!") if -f ".$_.swp";
     }
 
     # Unless -diff or -revert in use, we're done.
@@ -772,8 +791,8 @@ scope. Example: I<"ct edit -all">.
 
 sub edit {
     for (@ARGV[1..$#ARGV]) { $_ = readlink if -l && defined readlink }
-    # Allows 'ct edit' to be shorthand for 'ct edit -dir'.
-    push(@ARGV, qw(-dir)) if @ARGV == 1;
+    # Allows 'ct edit' to be shorthand for 'ct edit -dir -me'.
+    push(@ARGV, qw(-dir -me)) if @ARGV == 1;
     my %opt;
     # -c999 isn't a real flag, it's there to disambiguate -c vs -ci
     GetOptions(\%opt, qw(ci c999)) if grep /^-ci$/, @ARGV;
@@ -1140,7 +1159,7 @@ To add a global override called 'cleartool xxx', you could just write a
 subroutine 'xxx', place it after the __END__ token in Wrapper.pm, and
 re-run 'make install'. However, these changes wcould be lost when a new
 version of ClearCase::Wrapper is released, and you'd have to take
-responsibility for merging your changes and mine.
+responsibility for merging your changes with mine.
 
 Therefore, the preferred way to make site-wide customizations or
 additions is to make an I<overlay> module. ClearCase::Wrapper will
@@ -1153,10 +1172,11 @@ A sample overlay module is provided in the C<./examples> subdir. To
 make your own you need only take this sample, change all uses of the
 word 'MySite' to a string of your choice, replace the sample subroutine
 C<mysite()> with your own, and install. It's a good idea to document
-your override in POD format right above the sub and make the
+your extension in POD format right above the sub and make the
 appropriate addition to the "Usage Message Extensions" section.  Also,
 if the command has an abbreviation (e.g. checkout/co) you should add
-that to the "Command Aliases" section.
+that to the "Command Aliases" section. See ClearCase::Wrapper::DSB
+for examples.
 
 Two separate namespaces are recognized for overlays:
 I<ClearCase::Wrapper::*> and I<ClearCase::Wrapper::Site::*>. The intent
@@ -1167,10 +1187,10 @@ many sites using ClearCase, and your site is known as R85G. There could
 be a I<ClearCase::Wrapper::XYZ> overlay with enhancements that apply
 anywhere within XYZ and/or a I<ClearCase::Wrapper::Site::R85G> for
 your people only. Note that since overlay modules in the Site namespace
-are not expected to be published on CPAN there's no need for XYZ to
-appear in its name; that can be implicit.
+are not expected to be published on CPAN the naming rules can be less
+strict, which is why we left C<XYZ> out of the latter module name.
 
-Overlays in the general (I<ClearCase::Wrapper::*>) namespace are
+Overlays in the general I<ClearCase::Wrapper::*> namespace are
 traversed before I<ClearCase::Wrapper::Site::*>. This allows
 site-specific configuration to override more general code. Within each
 namespace modules are read in standard ASCII sorted alphabetical
@@ -1178,22 +1198,23 @@ order.
 
 Override subroutines are called with @ARGV as their parameter list (and
 @ARGV is also available directly of course). The function can do
-whatever it likes but it's strongly recommended that I<ClearCase::Argv>
-be used to run any cleartool subcommands and its base class I<Argv> be
-used to run other programs. These modules provide value for
-UNIX/Windows portability and debugging, and aid in parsing flags into
-different categories where required. See their PODs for full
-documentation, and see the supplied overrides for lots of examples.
+whatever it likes but it's recommended that I<ClearCase::Argv> be used
+to run any cleartool subcommands, and its base class I<Argv> be used to
+run other programs. These modules provide value for UNIX/Windows
+portability and debugging, and aid in parsing flags into different
+categories where required. See their PODs for full documentation, and
+see the supplied extensions for lots of examples.
 
 =item * Personal Preference Setting
 
 As well as allowing for site-wide enhancements to be made in
-Wrapper.pm, a hook is also provided for individual users (who must be
-knowledgeable about both ClearCase and Perl) to set their own
-defaults.  If the file C<~/.clearcase_profile.pl> exists it will be
+Wrapper.pm, a hook is also provided for individual users to set their
+own defaults.  If the file C<~/.clearcase_profile.pl> exists it will be
 read before launching any of the sitewide enhancements. Note that this
 file is passed to the Perl interpreter and thus has access to the full
-array of Perl syntax.
+array of Perl syntax. This mechanism is powerful but the corollary is
+that users must be experienced with both ClearCase and Perl, and to
+some degree wth the ClearCase::Wrapper module, to use it.
 
 =item * Sitewide ClearCase Comment Defaults
 
@@ -1238,7 +1259,7 @@ to have by default.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 1997-2002 David Boyce (dsbperl@cleartool.com). All rights
+Copyright (c) 1997-2002 David Boyce (dsbperl AT boyski.com). All rights
 reserved.  This Perl program is free software; you may redistribute it
 and/or modify it under the same terms as Perl itself.
 

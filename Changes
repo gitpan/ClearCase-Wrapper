@@ -119,3 +119,18 @@ Revision history for Perl extension ClearCase::Wrapper.
 
 1.09 Tue Jul 22 10:41:32 EDT 2003
 	- Fixed contact data.
+
+1.10 Sat Mar 13 17:44:34 EST 2004
+	- Add warning when checking in files open in vim.
+
+1.11 Mon Mar 14 00:00:51 EST 2005
+	- Cleanups occasioned by port to new environment.
+	  Worked around an apparent bug in 5.6.1: the statement
+	  "local $0 = ..." causes the user's PATH to be trashed such
+	  that $ENV{PATH} looks ok but "system qw(printenv PATH)"
+	  doesn't. It's hard to see how that could be my bug but
+	  in any case it's not a problem in more modern Perls so
+	  I just worked around it for 5.6.
+	- The "ct ci" feature now considers only files checked out
+	  by the current user in the current view and dir.
+	- Port to NCA environments (see 'ncatool').

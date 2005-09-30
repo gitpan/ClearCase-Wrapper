@@ -57,8 +57,8 @@ if (@ARGV && !$ENV{CLEARCASE_WRAPPER_NATIVE} &&
 # If we're on Windows we need ClearCase::Argv to avoid the weird
 # behavior of native exec() there. If we're already using ClearCase::Argv
 # we continue to do so, and if any -/foo flags are directed at it
-# we drag it in in order to allow it to parse them. But otherwise, in
-# order to not unduly slow down a cmd that isn't being overridden anyway,
+# we must use it in in order to parse them. But otherwise, so as
+# to not unduly slow down a cmd that isn't being overridden anyway,
 # we skip all that overhead and just exec.
 if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
     if (grep !m%^-/%, @ARGV) {
@@ -72,6 +72,10 @@ if ($^O =~ /MSWin32|Windows/ || defined $Argv::{new} || grep(m%^-/%, @ARGV)) {
 	exit system 'cleartool', @ARGV;
     }
 } else {
-    die "Error: no ClearCase on this system!\n" unless -d '/usr/atria';
-    exec('/usr/atria/bin/cleartool', @ARGV) && exit $?;
+    if (-d '/usr/atria') {
+	unshift(@ARGV, '/usr/atria/bin/cleartool');
+    } else {
+	unshift(@ARGV, 'cleartool');
+    }
+    exec(@ARGV) && exit 2;
 }
