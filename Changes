@@ -134,3 +134,20 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- The "ct ci" feature now considers only files checked out
 	  by the current user in the current view and dir.
 	- Port to NCA environments (see 'ncatool').
+
+1.12 Tue May  2 14:29:17 EDT 2006
+	- Flush the view cache after creating dirs. This is helpful
+	  when the cwd has been mkelem-ed (though you still need to
+	  "cd $PWD" after mkelem-ing the cwd).
+
+1.13 Tue May 16 11:56:18 EDT 2006
+	- New feature: "ct diffcr -data". Remove pseudo-differences
+	  in diffcr output, those caused by files with differing
+	  versions but identical contents.
+	- Removed the feature of "ct ci" which automatically added
+	  "-nc" to checkins of directories. It seemed overly
+	  intrusive for a standard wrapper.
+
+1.14 Fri Aug  3 12:26:29 EDT 2007
+	- Fixed rt.cpan.org bug #28648 "ct man query_language"
+	  does not work.

@@ -2,8 +2,6 @@ Changes
 MANIFEST
 Makefile.PL
 README
-README.upgrade
-SUMMARY.T0042
 Wrapper.pm
 cleartool.plx
 lib/ClearCase/Wrapper/clearcase_profile

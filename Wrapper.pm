@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.11';
+$VERSION = '1.14';
 
 require 5.006;
 
@@ -224,6 +224,7 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    $checkin	= "\n* [-dir|-rec|-all|-avobs] [-ok] [-diff [diff-opts]] [-revert]";
    $checkout	= "\n* [-dir|-rec] [-ok]";
    $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
+   $diffcr	= "\n* [-data]";
    $lsprivate	= "\n* [-dir|-rec|-all] [-ecl/ipsed] [-type d|f]
 * [-rel/ative] [-ext] [pname]";
    $lsview	= "\n* [-me]";
@@ -329,7 +330,11 @@ sub man {
 		if $pager =~ /more|less/;
 	}
     } elsif ($page ne $::prog) {
-	exit($? != 0);
+	if (!Native($page)) {
+	    ClearCase::Argv->new(@ARGV)->exec;
+	} else {
+	    exit($? != 0);
+	}
     }
     my $psep = MSWIN ? ';' : ':';
     require File::Basename;
@@ -345,15 +350,14 @@ __END__
 
 =head1 NAME
 
-ClearCase::Wrapper - general-purpose wrapper for B<cleartool>
+ClearCase::Wrapper - General-purpose wrapper for B<cleartool>
 
 =head1 SYNOPSIS
 
-This perl module functions as a wrapper for B<cleartool>, allowing the
-command-line interface of B<cleartool> to be extended or modified. It
-allows defaults to be changed, new flags to be added to existing
-B<cleartool> commands, or entirely new B<cleartool> commands to be
-synthesized.
+This perl module functions as a wrapper for B<cleartool>, allowing its
+command-line interface to be extended or modified. It allows defaults
+to be changed, new flags to be added to existing B<cleartool> commands,
+or entirely new commands to be synthesized.
 
 =cut
 
@@ -604,17 +608,18 @@ sub extensions {
 
 =item * CI/CHECKIN
 
-Extended to handle the B<-dir/-rec/-all/-avobs> flags.
+Extended to handle the B<-dir/-rec/-all/-avobs> flags. These are fairly
+self-explanatory but for the record B<-dir> checks in all checkouts in
+the current directory, B<-rec> does the same but recursively down from
+the current directory, B<-all> operates on all checkouts in the current
+VOB, and B<-avobs> on all checkouts in any VOB.
 
 Extended to allow B<symbolic links> to be checked in (by operating on
 the target of the link instead).
 
 Extended to implement a B<-diff> flag, which runs a B<I<diff -pred>>
-command before each checkin so the user can see his/her changes while
-typing the comment.
-
-Automatically supplies B<-nc> to checkins if the element list consists
-of only directories (since directories get a default comment).
+command before each checkin so the user can review his/her changes
+before typing the comment.
 
 Implements a new B<-revert> flag. This causes identical (unchanged)
 elements to be unchecked-out instead of being checked in.
@@ -661,10 +666,13 @@ sub checkin {
 
     $ci->args(@elems);
 
+# Turned off - on further review this feature seems too intrusive.
+=pod
     # Default to -nc if checking in directories only.
     if (!grep(/^-c$|^-cq|^-nc$|^-cfi/, @ARGV)) {
 	$ci->opts('-nc', $ci->opts) if !grep {!-d} @elems;
     }
+=cut
 
     # Give a warning if the file is open for editing by vim.
     # (I know, there are lots of other editors but it just happens
@@ -685,8 +693,9 @@ sub checkin {
     $ci->opts('-cqe', $ci->opts)
 			if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
 
-    # Without -diff we only care about retcode
+    # Without -diff we only care about return code
     $diff->stdout(0) unless $opt{'diff'};
+
     # With -revert, suppress msgs from typemgrs that don't do diffs
     $diff->stderr(0) if $opt{revert};
 
@@ -775,6 +784,77 @@ sub diff {
     }
 }
 
+=item * DIFFCR
+
+Extended to add the B<-data> flag, which compares the I<contents>
+of differing elements and removes them from the output if the
+contents do not differ.
+
+=cut
+
+sub diffcr {
+    my %opt;
+    GetOptions(\%opt, qw(data)) if grep m%^-d%, @ARGV;
+    # If -data not passed, fall through to regular behavior.
+    if ($opt{data}) {
+	GetOptions(\%opt, qw(long));
+	die Msg('E', "incompatible flags: -data and -long")
+	    if exists $opt{long};
+
+	require Digest::MD5;
+	my $md51 = Digest::MD5->new;
+	my $md52 = Digest::MD5->new;
+
+	my $diffcr = ClearCase::Argv->new(@ARGV);
+	my @results = $diffcr->qx;
+	my %elems;
+	for (@results) {
+	    if (m%^([<>]\s+)(.*)@@([/\\]\S*)(.*)%) {
+		my($prefix, $elem, $version, $suffix) = ($1, $2, $3, $4);
+		next if ! -f $elem;
+		if (exists $elems{$elem}) {
+		    my $same = 0;
+		    if ($elems{$elem}->[0] eq $version) {
+			$same = 1;
+		    } else {
+			my $v1 = join('@@', $elem, $elems{$elem}->[0]);
+			my $v2 = join('@@', $elem, $version);
+
+			if (open(V1, $v1) && open(V2, $v2)) {
+			    $md51->addfile(*V1);
+			    close(V1);
+			    my $digest1 = $md51->hexdigest;
+
+			    $md52->addfile(*V2);
+			    close(V2);
+			    my $digest2 = $md52->hexdigest;
+
+			    if ($digest1 eq $digest2) {
+				$same = 1;
+			    } else {
+				chomp $elems{$elem}->[1];
+				$elems{$elem}->[1] .= " [$digest1]\n";
+				chomp $_;
+				$_ .= " [$digest2]\n";
+			    }
+			}
+		    }
+		    if (!$same) {
+			print $elems{$elem}->[1];
+			print;
+		    }
+		    delete $elems{$elem};
+		} else {
+		    $elems{$elem} = [$version, $_];
+		}
+	    } else {
+		print;
+	    }
+	}
+	exit(0);
+    }
+}
+
 =item * EDIT/VI
 
 Convenience command. Same as 'checkout' but execs your favorite editor
@@ -832,11 +912,13 @@ sub help {
 	if (Extension($op)) {
 	    @text = ('Usage: *') if !@text;
 	    chomp $text[-1];
-	    chomp(my $msg = $$op);
-	    my($indent) = ($text[-1] =~ /^(\s*)/);
-	    substr($indent, -2, 2) = '';
-	    $msg =~ s/\n/\n$indent/gs;
-	    push(@text, $msg);
+	    if (my $msg = $$op) {
+		chomp $msg;
+		my($indent) = ($text[-1] =~ /^(\s*)/);
+		substr($indent, -2, 2) = '';
+		$msg =~ s/\n/\n$indent/gs;
+		push(@text, $msg);
+	    }
 	    print @text, "\n";
 	    exit 0;
 	} else {
@@ -994,10 +1076,10 @@ derived via the B<-dir/-rec> flags>.  If the B<-ci> flag is present,
 any directories automatically checked out are checked back in too.
 
 By default, only regular (I<-other>) view-private files are considered
-by I<-dir|-rec>.  The I<-do> flag causes derived objects to be made
+by B<-dir|-rec>.  The B<-do> flag causes derived objects to be made
 into elements as well.
 
-If I<-ok> is specified, the user will be prompted to continue after the
+If B<-ok> is specified, the user will be prompted to continue after the
 list of eligible files is determined.
 
 When invoked in a view-private directory, C<mkelem -dir/-rec> will
@@ -1072,7 +1154,13 @@ sub mkelem {
     $ct->argv(@ARGV)->system if grep -f, @ARGV;
 
     # Last - if the -ci flag was supplied, check the dirs back in.
-    $ct->ci(['-nc'], keys %dirs)->exec if %dirs && grep /^-ci$/, @ARGV;
+    # Also flush the view cache if dirs were created. Really
+    # we could be smarter here because it really only needs flushing
+    # if one of the dirs was the cwd.
+    if (%dirs) {
+	$ct->ci(['-nc'], keys %dirs)->system if grep /^-ci$/, @ARGV;
+	$ct->setcs(['-curr'])->system;
+    }
 
     # Done - don't drop back to main program.
     exit $?;
@@ -1084,6 +1172,8 @@ Extended to accept (and ignore) the standard comment flags for
 consistency with other cleartool cmds.
 
 Extended to handle the -dir/-rec/-all/-avobs flags.
+
+Extended to operate on ClearCase symbolic links.
 
 =cut
 
@@ -1120,7 +1210,8 @@ important feature is that it preserves the value of ESC-_ (C<ksh -o
 vi>) or !$ (csh). The CLEARCASE_WRAPPER_PAGER EV has the same effect.
 
 This may not work on Windows, though it's possible that a sufficiently
-modern Perl build and a smarter pager than I<more.com> will work.
+modern Perl build and a smarter pager than I<more.com> will do the
+trick.
 
 =item * -P flag
 
@@ -1134,7 +1225,7 @@ Introduces a global convenience/standardization feature: the flag
 B<-me> in the context of a command which takes a B<-tag view-tag>
 causes I<"$LOGNAME"> to be prefixed to the tag name with an
 underscore.  This relies on the fact that even though B<-me> is a
-native cleartool flag, at least through CC5.0 no command which takes
+native cleartool flag, at least through CC 7.0 no command which takes
 B<-tag> also takes B<-me> natively. For example:
 
     % <wrapper-context> mkview -me -tag myview ... 
@@ -1164,9 +1255,10 @@ responsibility for merging your changes with mine.
 Therefore, the preferred way to make site-wide customizations or
 additions is to make an I<overlay> module. ClearCase::Wrapper will
 automatically include ('require') all modules in the
-ClearCase::Wrapper::* subclass. Thus, if you work for XYZ Corporation
-you should put your enhancement subroutines in a module called
-ClearCase::Wrapper::XYZ and they'll automatically become available.
+ClearCase::Wrapper::* subclass. Thus, if you work for C<TLA
+Corporation> you should put your enhancement subroutines in a module
+called ClearCase::Wrapper::TLA and they'll automatically become
+available.
 
 A sample overlay module is provided in the C<./examples> subdir. To
 make your own you need only take this sample, change all uses of the
@@ -1182,13 +1274,13 @@ Two separate namespaces are recognized for overlays:
 I<ClearCase::Wrapper::*> and I<ClearCase::Wrapper::Site::*>. The intent
 is that if your extension is site-specific it should go in the latter
 area, if of general use in the former. These may be combined.  For
-instance, imagine XYZ Corporation is a giant international company with
+instance, imagine TLA Corporation is a giant international company with
 many sites using ClearCase, and your site is known as R85G. There could
-be a I<ClearCase::Wrapper::XYZ> overlay with enhancements that apply
-anywhere within XYZ and/or a I<ClearCase::Wrapper::Site::R85G> for
+be a I<ClearCase::Wrapper::TLA> overlay with enhancements that apply
+anywhere within TLA and/or a I<ClearCase::Wrapper::Site::R85G> for
 your people only. Note that since overlay modules in the Site namespace
 are not expected to be published on CPAN the naming rules can be less
-strict, which is why we left C<XYZ> out of the latter module name.
+strict, which is why C<TLA> was left out of the latter module name.
 
 Overlays in the general I<ClearCase::Wrapper::*> namespace are
 traversed before I<ClearCase::Wrapper::Site::*>. This allows
@@ -1196,14 +1288,14 @@ site-specific configuration to override more general code. Within each
 namespace modules are read in standard ASCII sorted alphabetical
 order.
 
-Override subroutines are called with @ARGV as their parameter list (and
-@ARGV is also available directly of course). The function can do
+All override subroutines are called with @ARGV as their parameter list
+(and @ARGV is also available directly of course). The function can do
 whatever it likes but it's recommended that I<ClearCase::Argv> be used
 to run any cleartool subcommands, and its base class I<Argv> be used to
-run other programs. These modules provide value for UNIX/Windows
-portability and debugging, and aid in parsing flags into different
-categories where required. See their PODs for full documentation, and
-see the supplied extensions for lots of examples.
+run other programs. These modules help with UNIX/Windows portability
+and debugging, and aid in parsing flags into different categories where
+required. See their PODs for full documentation, and see the supplied
+extensions for lots of examples.
 
 =item * Personal Preference Setting
 
@@ -1238,9 +1330,9 @@ somewhat slower.
 
 =head1 DIAGNOSTICS
 
-The flag B<-/dbg=1> prints all "real" cleartool operations executed
-by the wrapper to stderr as long as the extension in use was coded
-with ClearCase::Argv, which is the case for all supplied extensions.
+The flag B<-/dbg=1> prints all cleartool operations executed by the
+wrapper to stderr as long as the extension in use was coded with
+ClearCase::Argv, which is the case for all supplied extensions.
 
 =head1 INSTALLATION
 
@@ -1259,7 +1351,7 @@ to have by default.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 1997-2002 David Boyce (dsbperl AT boyski.com). All rights
+Copyright (c) 1997-2006 David Boyce (dsbperl AT boyski.com). All rights
 reserved.  This Perl program is free software; you may redistribute it
 and/or modify it under the same terms as Perl itself.
 

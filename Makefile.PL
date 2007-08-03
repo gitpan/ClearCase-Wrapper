@@ -31,8 +31,7 @@ print q(
 
 *NOTE*  Consider installing ClearCase::Wrapper::DSB too.
 *NOTE*  As of version 1.00, much of the functionality previously
-*NOTE*  in this module has been moved to ClearCase::Wrapper::DSB.
-*NOTE*  Many of my favorite extensions are now there.
+*NOTE*  in this module has been moved to that one.
 
 );
 
