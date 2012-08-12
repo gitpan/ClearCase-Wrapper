@@ -41,7 +41,7 @@ print q(
 WriteMakefile(
     'NAME'		=> 'ClearCase::Wrapper',
     'VERSION_FROM'	=> 'Wrapper.pm', # finds $VERSION
-    'EXE_FILES'		=> [ 'cleartool.plx' ],
+    'EXE_FILES'		=> [ qw(cleartool.plx wrapdebug) ],
     'PREREQ_PM' => {
 	  File::Spec			=> 0.82,
 	  Getopt::Long			=> 2.17,

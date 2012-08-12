@@ -2,6 +2,8 @@
 
 use strict;
 use warnings;
+use File::Basename;
+use File::Spec::Functions qw(catfile);
 use vars qw($prog $dieexit $dieexec $diemexec);
 
 # The bulk of the code comes from ClearCase::Wrapper ...
@@ -35,6 +37,22 @@ BEGIN {
 	    (my $msg = $@) =~ s%\s*\(.*%!%;
 	    warn "$prog: Warning: $msg";
 	}
+	my (%pkg, %seen); #seen functions were overridden: skip next cases
+	$pkg{$_}++ for values %ClearCase::Wrapper::ExtMap;
+	for (reverse sort keys %pkg) {
+	    s%::%/%g;
+	    my $as = catfile('auto', $_, 'autosplit.ix');
+	    my ($fas) = grep /\Q$as\E$/, keys %INC;
+	    die "Could not find $as in \%INC" unless $fas;
+	    my $dir = dirname($INC{$fas});
+	    opendir DIR, $dir or die "Could not open $dir";
+	    for (grep /\.al$/, readdir DIR) {
+		next if $seen{$_}++;
+		my $f = catfile($dir, $_);
+		require $f;
+	    }
+	    closedir DIR;
+	}
     }
 }
 
@@ -44,7 +62,6 @@ sub one_cmd {
     if (!$ENV{CLEARCASE_WRAPPER_NATIVE} && 
             ClearCase::Wrapper::Extension($ARGV[0])) {
 	# This provides support for writing extensions.
-#	local $^W = 0;
 	require ClearCase::Argv;
         {
             no warnings qw(redefine);

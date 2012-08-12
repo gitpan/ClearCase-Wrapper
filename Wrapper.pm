@@ -1,12 +1,15 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.16';
+$VERSION = '1.17';
 
 require 5.006;
 
 use AutoLoader 'AUTOLOAD';
+use B;
+use strict;
+use warnings;
 
-use vars qw(%Packages %ExtMap $libdir $diemexec);
+use vars qw(%Packages %ExtMap $libdir $prog $dieexit $dieexec $diemexec);
 
 # Inherit some symbols from the main package. We will later "donate"
 # these to all overlay packages as well.
@@ -18,10 +21,10 @@ BEGIN {
 }
 
 # For some reason this can't be handled the same as $prog above ...
-use constant MSWIN => $^O =~ /MSWin32|Windows_NT/i ? 1 : 0;
+use constant MSWIN => $^O =~ /MSWin|Windows_NT/i ? 1 : 0;
 
 # This is the list of functions we want to export to overlay pkgs.
-@exports = qw(MSWIN GetOptions Assert Burrow Msg Pred ViewTag
+my @exports = qw(MSWIN GetOptions Assert Burrow Msg Pred ViewTag
 		    AutoCheckedOut AutoNotCheckedOut AutoViewPrivate);
 
 # Hacks for portability with Windows env vars.
@@ -69,86 +72,89 @@ $Getopt::Long::ignorecase = 0;  # global override for dumb default
 ## placed in the standard package analogous to their pathname
 ## (e.g. ClearCase::Wrapper::Foo). Magic occurs here to get
 ## them into ClearCase::Wrapper where they belong.
+sub _FindAndLoadModules {
+    my ($dir, $subdir) = @_;
+    # Not sure how glob() sorts so force a standard order.
+    my @pms = sort glob("$dir/$subdir/*.pm");
+    for my $pm (@pms) {
+	$pm =~ s%^$dir/(.*)\.pm$%$1%;
+	(my $pkg = $pm) =~ s%[/\\]+%::%g;
+	eval "*${pkg}::exit = \$dieexit";
+	eval "*${pkg}::exec = \$dieexec";
+
+	# In this block we temporarily enter the overlay's package
+	# just in case the overlay module forgot its package stmt.
+	# We then require the overlay file and also, if it's
+	# an autoloaded module (which is recommended), we drag
+	# in the index file too. This is because we need to
+	# derive a list of all functions defined in the overlay
+	# in order to import them to our own namespace.
+	{
+	    eval qq(package $pkg); # default the pkg correctly
+	    no warnings qw(redefine);
+	    eval {
+		eval "require $pkg";
+		warn $@ if $@;
+	    };
+	    next if $@;
+	    my $ix = "auto/$pm/autosplit.ix";
+	    if (-e "$dir/$ix") {
+		eval { require $ix };
+		warn $@ if $@;
+	    }
+	}
+
+	# Now the overlay module is read in. We need to examine its
+	# newly-created symbol table, determine which functions
+	# it defined, and import them here. The same basic thing is
+	# done for the base package later.
+	no strict 'refs';
+	my %names = %{"${pkg}::"};
+	for (keys %names) {
+	    # Skip symbols that can't be names of valid cleartool ops.
+	    next if m%^(?:_?[A-Z]|__|[ab]$)%;
+	    my $tglob = "${pkg}::$_";
+	    my $coderef = \&{$tglob};
+	    next unless ref $coderef;
+	    my $cv = B::svref_2object($coderef);
+	    next unless $cv->isa('B::CV');
+	    next if $cv->GV->isa('B::SPECIAL');
+	    my $p = $cv->GV->STASH->NAME;
+	    next unless $p eq $pkg;
+
+	    # Take what survives the above tests and create a hash
+	    # mapping defined functions to the pkg that defines them.
+	    $ExtMap{$_} = $pkg;
+	    # We import the entire typeglob for 'foo' when we
+	    # find an extension func named foo(). This allows usage
+	    # msg extensions (in the form $foo) to come over too.
+	    eval qq(*$_ = *$tglob);
+	}
+
+	# The base module defines a few functions which the
+	# overlay's code might want to use. Make aliases
+	# for those in the overlay's symbol table.
+	for (@exports) {
+	    eval "*${pkg}::$_ = \\&$_";
+	}
+	eval "*${pkg}::prog = \\\$prog";
+
+	$Packages{$pkg} = $INC{"$pm.pm"};
+    }
+}
 for my $subdir (qw(ClearCase/Wrapper ClearCase/Wrapper/Site)) {
     for my $dir (@INC) {
-	$dir =~ s%\\%/%g if MSWIN;
-	# Not sure how glob() sorts so force a standard order.
-	my @pms = sort glob("$dir/$subdir/*.pm");
-	for my $pm (@pms) {
-	    $pm =~ s%^$dir/(.*)\.pm$%$1%;
-	    (my $pkg = $pm) =~ s%[/\\]+%::%g;
-	    eval "*${pkg}::exit = \$dieexit";
-	    eval "*${pkg}::exec = \$dieexec";
-
-	    # In this block we temporarily enter the overlay's package
-	    # just in case the overlay module forgot its package stmt.
-	    # We then require the overlay file and also, if it's
-	    # an autoloaded module (which is recommended), we drag
-	    # in the index file too. This is because we need to
-	    # derive a list of all functions defined in the overlay
-	    # in order to import them to our own namespace.
-	    {
-		eval qq(package $pkg); # default the pkg correctly
-		local $^W = 0;	  # in case a function is redefined
-		eval {
-		    local @INC = ($dir);  # make %INC come out right
-		    eval "require $pkg";
-		};
-		warn $@, next if $@;
-		my $ix = "auto/$pm/autosplit.ix";
-		if (-e $ix) {
-		    eval { require $ix };
-		    warn $@ if $@;
-		}
-	    }
-
-	    # Now the overlay module is read in. We need to examine its
-	    # newly-created symbol table, determine which functions
-	    # it defined, and import them here. The same basic thing is
-	    # done for the base package later.
-	    my %names = %{"${pkg}::"};
-	    for (keys %names) {
-		my $tglob = "${pkg}::$_";
-		# Skip functions that can't be names of valid cleartool ops.
-		next if m%^_?[A-Z]%;
-		# Skip typeglobs that don't involve functions. We can only
-		# do this test under >=5.6.0 since exists() on a coderef
-		# is a new feature. The eval is needed to avoid a compile-
-		# time error in <5.6.0.
-		if ($] >= 5.006) {
-		    next unless eval { exists &{$tglob} };
-		}
-		# Take what survives the above tests and create a hash
-		# mapping defined functions to the pkg that defines them.
-		$ExtMap{$_} = $pkg;
-		# We import the entire typeglob for 'foo' when we
-		# find an extension func named foo(). This allows usage
-		# msg extensions (in the form $foo) to come over too.
-		eval qq(*$_ = *$tglob);
-	    }
-
-	    # The base module defines a few functions which the
-	    # overlay's code might want to use. Make aliases
-	    # for those in the overlay's symbol table.
-	    for (@exports) {
-		eval "*${pkg}::$_ = \\&$_";
-	    }
-	    eval "*${pkg}::prog = \\\$prog";
-
-	    $Packages{$pkg} = $INC{"$pm.pm"};
-	}
+	_FindAndLoadModules($dir, $subdir);
     }
 }
 
 $Packages{'ClearCase::Wrapper'} = __FILE__;
 
-use strict;
-
 # Piggyback on the -ver flag to show our version too.
 if (@ARGV && $ARGV[0] =~ /^-ver/i) {
     my $fmt = "*%-32s %s (%s)\n";
     local $| = 1;
-    for (keys %Packages) {
+    for (sort keys %Packages) {
 	my $ver = eval "\$$_\::VERSION" || '????';
 	my $mtime = localtime((stat $Packages{$_})[9]);
 	printf $fmt, $_, $ver, $mtime || '----';
@@ -222,7 +228,6 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
 # Usage Message Extensions
 #############################################################################
 {
-   local $^W = 0;
    no strict 'vars';
 
    # Extended messages for actual cleartool commands that we extend.
@@ -238,9 +243,7 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    $uncheckout	= " * [-nc]";
 
    # Extended messages for pseudo cleartool commands that we implement here.
-   # Note: we used to localize $0 but that turns out to trigger a bug
-   # in perl 5.6.1.
-   my $z = (($ARGV[0] eq 'help') ? $ARGV[1] : $ARGV[0]) || '';
+   my $z = $ARGV[0] || '';
    $edit	= "$z <co-flags> [-ci] <ci-flags> pname ...";
    $extensions	= "$z [-long]";
 }
@@ -269,14 +272,10 @@ if (-r "$ENV{HOME}/.clearcase_profile.pl" && ! -e "$libdir/NO_OVERRIDES") {
 # Add to ExtMap the names of extensions defined in the base package.
 for (keys %ClearCase::Wrapper::) {
     # Skip functions that can't be names of valid cleartool ops.
-    next if m%^_?[A-Z]%;
-    # Skip typeglobs that don't involve functions. We can only
-    # do this test under >=5.6.0 since exists() on a coderef
-    # is a new feature. The eval is needed to avoid a compile-
-    # time error in <5.6.0.
-    if ($] >= 5.006) {
-	next unless eval "exists \&ClearCase::Wrapper::$_";
-    }
+    next if m%^(?:_?[A-Z]|__)%;
+    # Skip typeglobs that don't involve functions.
+    my $tglob = "ClearCase::Wrapper::$_";
+    next unless ref \&{$tglob};
     # Take what survives the above tests and create a hash
     # mapping defined functions to the pkg that defines them.
     $ExtMap{$_} ||= __PACKAGE__;
@@ -288,6 +287,16 @@ for (keys %ClearCase::Wrapper::) {
 sub Extension {
     my $op = shift;
     return $ExtMap{$op};
+}
+
+# Returns the full name of a command, whether native or not; unchanged in error
+sub Canonic {
+    my $op = shift;
+    my $tglob = "$ExtMap{an}::$op";
+    my $coderef = \&{$tglob};
+    return $op unless ref $coderef;
+    my $cv = B::svref_2object($coderef);
+    return $cv->GV->NAME;
 }
 
 # Returns a boolean indicating whether the named cmd is native to
@@ -325,6 +334,7 @@ sub Extension {
 # part of the module. It runs "cleartool man <cmd>" as requested,
 # followed by "perldoc ClearCase::Wrapper" iff <cmd> is extended below.
 sub man {
+    $_ = Canonic($_) for @ARGV[1..$#ARGV];
     my $page = (grep !/^-/, @ARGV)[1];
     return 0 unless $page;
     ClearCase::Argv->new(@ARGV)->system if Native($page);
@@ -375,27 +385,25 @@ or entirely new commands to be synthesized.
 
 # Function to read through include files recursively, used by
 # config-spec parsing meta-commands. The first arg is a
-# "magic incrementing string", the second a filename,
-# the third an "action" which is eval-ed
+# filename, the second an "action" which is eval-ed
 # for each line.  It can be as simple as 'print' or as
 # complex a regular expression as desired. If the action is
 # null, only the names of traversed files are printed.
 sub Burrow {
-    local $input = shift;
+    # compatibility with old call signature, throw away uneeded param
+    shift if (@_ && $_[0] eq 'CATCS_00');
+
     my($filename, $action) = @_;
     print $filename, "\n" if !$action;
-    $input++;
-    if (!open($input, $filename)) {
-	warn "$filename: $!";
-	return 1;
-    }
-    while (<$input>) {
+    open($filename, $filename) || die Msg('E', "$filename: $!");
+    while (<$filename>) {
 	if (/^include\s+(.*)/) {
-	    Burrow($input, $1, $action);
+	    Burrow($1, $action);
 	    next;
 	}
 	eval $action if $action;
     }
+    close($filename);
     return 0;
 }
 
@@ -410,7 +418,6 @@ sub Msg {
 	$msg = "$prog: @_";
     }
     chomp $msg;
-    die $msg if !defined(wantarray);
     return "$msg\n";
 }
 
@@ -711,14 +718,6 @@ sub checkin {
 
     $ci->args(@elems);
 
-# Turned off - on further review this feature seems too intrusive.
-=pod
-    # Default to -nc if checking in directories only.
-    if (!grep(/^-c$|^-cq|^-nc$|^-cfi/, @ARGV)) {
-	$ci->opts('-nc', $ci->opts) if !grep {!-d} @elems;
-    }
-=cut
-
     # Give a warning if the file is open for editing by vim.
     # (I know, there are lots of other editors but it just happens
     # to be easy to detect vim by its .swp file)
@@ -963,20 +962,21 @@ sub edit {
 sub _helpmsg {
     my $FH = shift;
     my $rc = shift;
-    my @text = ClearCase::Argv->new(@_)->stderr(0)->qx;
     # Let cleartool handle any malformed requests.
     return 0 if @_ > 2;
+    my @text;
     if (@_ == 2) {
-	my $op = $_[1];
+	my $op = $_[1] = Canonic($_[1]);
+	@text = ClearCase::Argv->new(@_)->stderr(0)->qx;
 	if (Extension($op)) {
 	    chomp $text[-1] if @text;;
 	    if (my $msg = $$op) {
 		chomp $msg;
-
 		my $indent;
-                if (! @text) {
+                if (! @text or $text[0] =~ 'Usage: help ') {
 	            @text = ("Usage: * ");
                     $indent = "Usage: * $op ";
+		    $msg =~ s/^help/$op/;
                 } else {
 		    ($indent) = ($text[-1] =~ /^(\s*)/);
                     if (!$indent) {
@@ -992,6 +992,8 @@ sub _helpmsg {
 	}
         print $FH @text;
 	exit $rc;
+    } else {
+	@text = ClearCase::Argv->new(@_)->stderr(0)->qx;
     }
     print $FH @text, "\n";
     my $bars = '='x70;

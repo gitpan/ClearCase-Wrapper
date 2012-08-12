@@ -164,3 +164,16 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- Assert can now be called from a subfunction
 	- Tweaked indenting in show usage function
 	- Thanks to Marc Girod and Stephen Rauch for these changes
+
+1.17 Sun Aug 12 10:14:43 EDT 2012
+        - help for new commands: skip the cleartool error text.
+	- wrapdebug: an alternative driver, preloading modules for ease of debugging.
+	  Instructions of use in README.
+	- unmasked warnings (except redefine) and reported errors while requiring
+	  packages, under the full @INC (to allow them to use modules).
+	- fixed the test of existence of the autosplit.ix file.
+	- fixed the filter for package symbols after require
+	Thanks to Marc Girod for these changes.
+	Several enhancements contributed by Stephen Rauch, together with the
+	original impulse to better support strict/warnings and debugging.
+	Thanks as well to Ben Morrow for assistance.
