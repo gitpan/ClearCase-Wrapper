@@ -183,3 +183,9 @@ Revision history for Perl extension ClearCase::Wrapper.
 	- renamed wrapdebug to cleartool.dbg, so that it can be used as ipc process
 	  in ClearCase::Argv
 	Thanks to Marc Girod for these changes.
+
+1.19 Fri Aug  9 15:52:08 EDT 2013
+	- Fixed a typo and some warnings, also a quoting bug.
+	- This also includes a whitespace cleanup, so the diff is large but
+	  the diff -w is small.
+	Thanks to Anders Petersen Girod for these changes.

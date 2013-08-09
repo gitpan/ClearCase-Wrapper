@@ -1,6 +1,6 @@
 package ClearCase::Wrapper;
 
-$VERSION = '1.18';
+$VERSION = '1.19';
 
 require 5.006;
 
@@ -25,7 +25,7 @@ use constant MSWIN => $^O =~ /MSWin|Windows_NT/i ? 1 : 0;
 
 # This is the list of functions we want to export to overlay pkgs.
 my @exports = qw(MSWIN GetOptions Assert Burrow Msg Pred ViewTag
-		    AutoCheckedOut AutoNotCheckedOut AutoViewPrivate);
+                AutoCheckedOut AutoNotCheckedOut AutoViewPrivate);
 
 # Hacks for portability with Windows env vars.
 BEGIN {
@@ -39,12 +39,12 @@ BEGIN {
     ($libdir = $INC{'ClearCase/Wrapper.pm'}) =~ s%\.pm$%%;
 
     if (defined $ENV{CLEARCASE_PROFILE}) {
-	$ENV{_CLEARCASE_WRAPPER_PROFILE} = $ENV{CLEARCASE_PROFILE};
+      $ENV{_CLEARCASE_WRAPPER_PROFILE} = $ENV{CLEARCASE_PROFILE};
     } elsif ($ENV{_CLEARCASE_WRAPPER_PROFILE}) {
-	$ENV{CLEARCASE_PROFILE} = $ENV{_CLEARCASE_WRAPPER_PROFILE};
+      $ENV{CLEARCASE_PROFILE} = $ENV{_CLEARCASE_WRAPPER_PROFILE};
     } elsif (! -f "$ENV{HOME}/.clearcase_profile") {
-	my $rc = join('/', $libdir, 'clearcase_profile');
-	$ENV{CLEARCASE_PROFILE} = $rc if -r $rc;
+      my $rc = join('/', $libdir, 'clearcase_profile');
+      $ENV{CLEARCASE_PROFILE} = $rc if -r $rc;
     }
 }
 
@@ -77,74 +77,75 @@ sub _FindAndLoadModules {
     # Not sure how glob() sorts so force a standard order.
     my @pms = sort glob("$dir/$subdir/*.pm");
     for my $pm (@pms) {
-	$pm =~ s%^$dir/(.*)\.pm$%$1%;
-	(my $pkg = $pm) =~ s%[/\\]+%::%g;
-	eval "*${pkg}::exit = \$dieexit";
-	eval "*${pkg}::exec = \$dieexec";
+      my $dirQuoted = quotemeta($dir);
+      $pm =~ s%^$dirQuoted/(.*)\.pm$%$1%;
+      (my $pkg = $pm) =~ s%[/\\]+%::%g;
+      eval "*${pkg}::exit = \$dieexit";
+      eval "*${pkg}::exec = \$dieexec";
 
-	# In this block we temporarily enter the overlay's package
-	# just in case the overlay module forgot its package stmt.
-	# We then require the overlay file and also, if it's
-	# an autoloaded module (which is recommended), we drag
-	# in the index file too. This is because we need to
-	# derive a list of all functions defined in the overlay
-	# in order to import them to our own namespace.
-	{
-	    eval qq(package $pkg); # default the pkg correctly
-	    no warnings qw(redefine);
-	    eval {
-		eval "require $pkg";
-		warn $@ if $@;
-	    };
-	    next if $@;
-	    my $ix = "auto/$pm/autosplit.ix";
-	    if (-e "$dir/$ix") {
-		eval { require $ix };
-		warn $@ if $@;
-	    }
-	}
+      # In this block we temporarily enter the overlay's package
+      # just in case the overlay module forgot its package stmt.
+      # We then require the overlay file and also, if it's
+      # an autoloaded module (which is recommended), we drag
+      # in the index file too. This is because we need to
+      # derive a list of all functions defined in the overlay
+      # in order to import them to our own namespace.
+      {
+          eval qq(package $pkg); # default the pkg correctly
+          no warnings qw(redefine);
+          eval {
+            eval "require $pkg";
+            warn $@ if $@;
+          };
+          next if $@;
+          my $ix = "auto/$pm/autosplit.ix";
+          if (-e "$dir/$ix") {
+            eval { require $ix };
+            warn $@ if $@;
+          }
+      }
 
-	# Now the overlay module is read in. We need to examine its
-	# newly-created symbol table, determine which functions
-	# it defined, and import them here. The same basic thing is
-	# done for the base package later.
-	no strict 'refs';
-	my %names = %{"${pkg}::"};
-	for (keys %names) {
-	    # Skip symbols that can't be names of valid cleartool ops.
-	    next if m%^(?:_?[A-Z]|__|[ab]$)%;
-	    my $tglob = "${pkg}::$_";
-	    my $coderef = \&{$tglob};
-	    next unless ref $coderef;
-	    my $cv = B::svref_2object($coderef);
-	    next unless $cv->isa('B::CV');
-	    next if $cv->GV->isa('B::SPECIAL');
-	    my $p = $cv->GV->STASH->NAME;
-	    next unless $p eq $pkg;
+      # Now the overlay module is read in. We need to examine its
+      # newly-created symbol table, determine which functions
+      # it defined, and import them here. The same basic thing is
+      # done for the base package later.
+      no strict 'refs';
+      my %names = %{"${pkg}::"};
+      for (keys %names) {
+          # Skip symbols that can't be names of valid cleartool ops.
+          next if m%^(?:_?[A-Z]|__|[ab]$)%;
+          my $tglob = "${pkg}::$_";
+          my $coderef = \&{$tglob};
+          next unless ref $coderef;
+          my $cv = B::svref_2object($coderef);
+          next unless $cv->isa('B::CV');
+          next if $cv->GV->isa('B::SPECIAL');
+          my $p = $cv->GV->STASH->NAME;
+          next unless $p eq $pkg;
 
-	    # Take what survives the above tests and create a hash
-	    # mapping defined functions to the pkg that defines them.
-	    $ExtMap{$_} = $pkg;
-	    # We import the entire typeglob for 'foo' when we
-	    # find an extension func named foo(). This allows usage
-	    # msg extensions (in the form $foo) to come over too.
-	    eval qq(*$_ = *$tglob);
-	}
+          # Take what survives the above tests and create a hash
+          # mapping defined functions to the pkg that defines them.
+          $ExtMap{$_} = $pkg;
+          # We import the entire typeglob for 'foo' when we
+          # find an extension func named foo(). This allows usage
+          # msg extensions (in the form $foo) to come over too.
+          eval qq(*$_ = *$tglob);
+      }
 
-	# The base module defines a few functions which the
-	# overlay's code might want to use. Make aliases
-	# for those in the overlay's symbol table.
-	for (@exports) {
-	    eval "*${pkg}::$_ = \\&$_";
-	}
-	eval "*${pkg}::prog = \\\$prog";
+      # The base module defines a few functions which the
+      # overlay's code might want to use. Make aliases
+      # for those in the overlay's symbol table.
+      for (@exports) {
+          eval "*${pkg}::$_ = \\&$_";
+      }
+      eval "*${pkg}::prog = \\\$prog";
 
-	$Packages{$pkg} = $INC{"$pm.pm"};
+      $Packages{$pkg} = $INC{"$pm.pm"};
     }
 }
 for my $subdir (qw(ClearCase/Wrapper ClearCase/Wrapper/Site)) {
     for my $dir (@INC) {
-	_FindAndLoadModules($dir, $subdir);
+      _FindAndLoadModules($dir, $subdir);
     }
 }
 
@@ -155,9 +156,9 @@ if (@ARGV && $ARGV[0] =~ /^-ver/i) {
     my $fmt = "*%-32s %s (%s)\n";
     local $| = 1;
     for (sort keys %Packages) {
-	my $ver = eval "\$$_\::VERSION" || '????';
-	my $mtime = localtime((stat $Packages{$_})[9]);
-	printf $fmt, $_, $ver, $mtime || '----';
+      my $ver = eval "\$$_\::VERSION" || '????';
+      my $mtime = localtime((stat $Packages{$_})[9]);
+      printf $fmt, $_, $ver, $mtime || '----';
     }
     exit 0 if $ARGV[0] =~ /^-verw/i;
 }
@@ -175,21 +176,21 @@ sub _FirstIndex {
 # Implements the -me -tag convention (see POD).
 if (my $me = _FirstIndex('-me', @ARGV)) {
     if ($ARGV[0] =~ /^(?:set|start|end)view$|^rdl$|^work/) {
-	my $delim = 0;
-	for (@ARGV) {
-	    last if /^--$/;
-	    $delim++;
-	}
-	for (reverse @ARGV[0..$delim-1]) {
-	    if (/^\w+$/) {
-		$_ = join('_', $ENV{LOGNAME}, $_);
-		last;
-	    }
-	}
-	splice(@ARGV, $me, 1);
+      my $delim = 0;
+      for (@ARGV) {
+          last if /^--$/;
+          $delim++;
+      }
+      for (reverse @ARGV[0..$delim-1]) {
+          if (/^\w+$/) {
+            $_ = join('_', $ENV{LOGNAME}, $_);
+            last;
+          }
+      }
+      splice(@ARGV, $me, 1);
     } elsif (my $tag = _FirstIndex('-tag', @ARGV)) {
-	$ARGV[$tag+1] = join('_', $ENV{LOGNAME}, $ARGV[$tag+1]);
-	splice(@ARGV, $me, 1);
+      $ARGV[$tag+1] = join('_', $ENV{LOGNAME}, $ARGV[$tag+1]);
+      splice(@ARGV, $me, 1);
     }
 }
 
@@ -199,18 +200,18 @@ if (my $mflag = _FirstIndex('-M', @ARGV) || $ENV{CLEARCASE_WRAPPER_PAGER}) {
     pipe(READER, WRITER);
     my $pid;
     if ($pid = fork) {
-	close WRITER;
-	open(STDIN, ">&READER") || die Msg('E', "STDIN: $!");
-	my $pager = $ENV{CLEARCASE_WRAPPER_PAGER} || $ENV{PAGER};
-	if (!$pager) {
-	    require Config;
-	    $pager = $Config::Config{pager} || 'more';
-	}
-	exec $pager || warn Msg('W', "can't run $pager: $!");
+      close WRITER;
+      open(STDIN, ">&READER") || die Msg('E', "STDIN: $!");
+      my $pager = $ENV{CLEARCASE_WRAPPER_PAGER} || $ENV{PAGER};
+      if (!$pager) {
+          require Config;
+          $pager = $Config::Config{pager} || 'more';
+      }
+      exec $pager || warn Msg('W', "can't run $pager: $!");
     } else {
-	die Msg('E', "can't fork") if !defined($pid);
-	close READER;
-	open(STDOUT, ">&WRITER") || die Msg('E', "STDOUT: $!");
+      die Msg('E', "can't fork") if !defined($pid);
+      close READER;
+      open(STDOUT, ">&WRITER") || die Msg('E', "STDOUT: $!");
     }
 }
 
@@ -218,9 +219,9 @@ if (my $mflag = _FirstIndex('-M', @ARGV) || $ENV{CLEARCASE_WRAPPER_PAGER}) {
 if (my $pflag = _FirstIndex('-P', @ARGV)) {
     splice(@ARGV, $pflag, 1);
     if (MSWIN) {
-	eval "END { system qw(cmd /c pause) }";
+      eval "END { system qw(cmd /c pause) }";
     } else {
-	my $foo = <STDIN>;
+      my $foo = <STDIN>;
     }
 }
 
@@ -231,32 +232,32 @@ if (my $pflag = _FirstIndex('-P', @ARGV)) {
    no strict 'vars';
 
    # Extended messages for actual cleartool commands that we extend.
-   $checkin	= "\n* [-dir|-rec|-all|-avobs] [-ok] [-diff [diff-opts]]" .
+   $checkin      = "\n* [-dir|-rec|-all|-avobs] [-ok] [-diff [diff-opts]]" .
                   "\n* [-revert [-mkhlink]]";
-   $checkout	= "\n* [-dir|-rec] [-ok]";
-   $diff	= "\n* [-<n>] [-dir|-rec|-all|-avobs]";
-   $diffcr	= "\n* [-data]";
-   $lsprivate	= "\n* [-dir|-rec|-all] [-ecl/ipsed] [-type d|f]" .
-		  "\n* [-rel/ative] [-ext] [pname]";
-   $lsview	= "\n* [-me]";
-   $mkelem	= "\n* [-dir|-rec] [-do] [-ok]";
-   $uncheckout	= " * [-nc]";
+   $checkout      = "\n* [-dir|-rec] [-ok]";
+   $diff      = "\n* [-<n>] [-dir|-rec|-all|-avobs]";
+   $diffcr      = "\n* [-data]";
+   $lsprivate      = "\n* [-dir|-rec|-all] [-ecl/ipsed] [-type d|f]" .
+              "\n* [-rel/ative] [-ext] [pname]";
+   $lsview      = "\n* [-me]";
+   $mkelem      = "\n* [-dir|-rec] [-do] [-ok]";
+   $uncheckout      = " * [-nc]";
 
    # Extended messages for pseudo cleartool commands that we implement here.
    my $z = $ARGV[0] || '';
-   $edit	= "$z <co-flags> [-ci] <ci-flags> pname ...";
-   $extensions	= "$z [-long]";
+   $edit      = "$z <co-flags> [-ci] <ci-flags> pname ...";
+   $extensions      = "$z [-long]";
 }
 
 #############################################################################
 # Command Aliases
 #############################################################################
-*ci		= *checkin;
-*co		= *checkout;
-*lsp		= *lsprivate;
-*lspriv		= *lsprivate;
-*unco		= *uncheckout;
-*vi		= *edit;
+*ci            = *checkin;
+*co            = *checkout;
+*lsp            = *lsprivate;
+*lspriv            = *lsprivate;
+*unco            = *uncheckout;
+*vi            = *edit;
 
 #############################################################################
 # Allow per-user configurability. Give the individual access to @ARGV just
@@ -292,7 +293,7 @@ sub Extension {
 # Returns the full name of a command, whether native or not; unchanged in error
 sub Canonic {
     my $op = shift;
-    my $tglob = "$ExtMap{an}::$op";
+    my $tglob = $ExtMap{$op} . "::" . $op;
     my $coderef = \&{$tglob};
     return $op unless ref $coderef;
     my $cv = B::svref_2object($coderef);
@@ -305,27 +306,27 @@ sub Canonic {
 {
     my %native;
     sub Native {
-	my $op = shift;
-	return 1 if $op =~ m%^lsp(riv)?%;
-	if (! $op) {
-	    ($op = (caller(1))[3]) =~ s%.*:%%;
-	}
-	if (! keys %native) {
-	    my @usg = grep /^Usage:/, ClearCase::Argv->help->qx;
-	    for (@usg) {
-		if (/^Usage:\s*(\w+)\s*(\|\s*(\w+))?/) {
-		    $native{$1} = 1 if $1;
-		    $native{$3} = 1 if $3;
-		}
-	    }
-	}
-	if (exists($native{$op})) {
-	    return 1;
-	} elsif ($op =~ m%^(?:des|lsh)%) {
-	    return 1;
-	} else {
-	    return 0;
-	}
+      my $op = shift;
+      return 1 if $op =~ m%^lsp(riv)?%;
+      if (! $op) {
+          ($op = (caller(1))[3]) =~ s%.*:%%;
+      }
+      if (! keys %native) {
+          my @usg = grep /^Usage:/, ClearCase::Argv->help->qx;
+          for (@usg) {
+            if (/^Usage:\s*(\w+)\s*(\|\s*(\w+))?/) {
+                $native{$1} = 1 if $1;
+                $native{$3} = 1 if $3;
+            }
+          }
+      }
+      if (exists($native{$op})) {
+          return 1;
+      } elsif ($op =~ m%^(?:des|lsh)%) {
+          return 1;
+      } else {
+          return 0;
+      }
     }
 }
 
@@ -339,20 +340,20 @@ sub man {
     return 0 unless $page;
     ClearCase::Argv->new(@ARGV)->system if Native($page);
     if (exists($ClearCase::Wrapper::{$page})) {
-	# This EV hack causes perldoc to search for the right keyword
-	# within the module's perldoc.
-	if (!MSWIN) {
-	    require Config;
-	    my $pager = $Config::Config{pager};
-	    $ENV{PERLDOC_PAGER} ||= "$pager +/" . uc($page)
-		if $pager =~ /more|less/;
-	}
+      # This EV hack causes perldoc to search for the right keyword
+      # within the module's perldoc.
+      if (!MSWIN) {
+          require Config;
+          my $pager = $Config::Config{pager};
+          $ENV{PERLDOC_PAGER} ||= "$pager +/" . uc($page)
+            if $pager =~ /more|less/;
+      }
     } elsif ($page ne $::prog) {
-	if (!Native($page)) {
-	    ClearCase::Argv->new(@ARGV)->exec;
-	} else {
-	    exit($? ? 1 : 0);
-	}
+      if (!Native($page)) {
+          ClearCase::Argv->new(@ARGV)->exec;
+      } else {
+          exit($? ? 1 : 0);
+      }
     }
     my $psep = MSWIN ? ';' : ':';
     require File::Basename;
@@ -397,11 +398,11 @@ sub Burrow {
     print $filename, "\n" if !$action;
     open($filename, $filename) || die Msg('E', "$filename: $!");
     while (<$filename>) {
-	if (/^include\s+(.*)/) {
-	    Burrow($1, $action);
-	    next;
-	}
-	eval $action if $action;
+      if (/^include\s+(.*)/) {
+          Burrow($1, $action);
+          next;
+      }
+      eval $action if $action;
     }
     close($filename);
     return 0;
@@ -413,9 +414,9 @@ sub Msg {
     my $type = {W=>'Warning', E=>'Error'}->{$key} if $key;
     my $msg;
     if ($type) {
-	$msg = "$prog: $type: @_";
+      $msg = "$prog: $type: @_";
     } else {
-	$msg = "$prog: @_";
+      $msg = "$prog: @_";
     }
     chomp $msg;
     return "$msg\n";
@@ -435,8 +436,8 @@ sub Assert {
     my $str = ${$op} || $op || 'help';
 
     for (@msg) {
-	chomp;
-	print STDERR Msg('E', $_);
+      chomp;
+      print STDERR Msg('E', $_);
     }
     _helpmsg(STDERR, 1, "help", $op);
 }
@@ -445,12 +446,12 @@ sub Assert {
 sub Pred {
     my($vers, $count, $ct) = @_;
     if ($count) {
-	$ct ||= ClearCase::Argv->new;
-	(my $elem = $vers) =~ s/@@.*//;
-	chomp(my $pred = $ct->desc([qw(-pred -s)], $vers)->qx);
-	return Pred("$elem@\@$pred", $count-1, $ct);
+      $ct ||= ClearCase::Argv->new;
+      (my $elem = $vers) =~ s/@@.*//;
+      chomp(my $pred = $ct->desc([qw(-pred -s)], $vers)->qx);
+      return Pred("$elem@\@$pred", $count-1, $ct);
     } else {
-	return $vers;
+      return $vers;
     }
 }
 
@@ -458,22 +459,22 @@ sub Pred {
 sub ViewTag {
     my $vtag;
     if (@_) {
-	local(@ARGV) = @_;
-	GetOptions("tag=s" => \$vtag);
+      local(@ARGV) = @_;
+      GetOptions("tag=s" => \$vtag);
     }
     if (!$vtag) {
-	require Cwd;
-	my $cwd = Cwd::fastgetcwd;
-	if (MSWIN) {
-	    $cwd =~ s/^[A-Z]://i;
-	    $cwd =~ s%\\%/%g;
-	}
-	if ($cwd =~ m%/+view/([^/]+)%) {
-	    $vtag ||= $1;
-	}
+      require Cwd;
+      my $cwd = Cwd::fastgetcwd;
+      if (MSWIN) {
+          $cwd =~ s/^[A-Z]://i;
+          $cwd =~ s%\\%/%g;
+      }
+      if ($cwd =~ m%/+view/([^/]+)%) {
+          $vtag ||= $1;
+      }
     }
     if (!$vtag && $ENV{CLEARCASE_ROOT}) {
-	$vtag = (split(m%[/\\]%, $ENV{CLEARCASE_ROOT}))[-1];
+      $vtag = (split(m%[/\\]%, $ENV{CLEARCASE_ROOT}))[-1];
     }
     $vtag ||= ClearCase::Argv->pwv(['-s'])->qx;
     chomp $vtag if $vtag;
@@ -488,22 +489,22 @@ sub _ShowFound {
     my $n = @_;
     my $msg;
     if ($n == 0) {
-	$msg = Msg(undef, "no eligible elements found");
+      $msg = Msg(undef, "no eligible elements found");
     } elsif ($n == 1) {
-	$msg = Msg(undef, "found 1 file: @_");
+      $msg = Msg(undef, "found 1 file: @_");
     } elsif ($n <= 10) {
-	$msg = Msg(undef, "found $n files: @_");
+      $msg = Msg(undef, "found $n files: @_");
     } else {
-	$msg = Msg(undef, "found $n files: @_[0..3] ...");
+      $msg = Msg(undef, "found $n files: @_[0..3] ...");
     }
     print STDERR $msg;
     # Ask if it's OK to continue, exit if no. Generally results from -ok flag.
     if ($ok && $n) {
-	(my $op = (caller(2))[3]) =~ s%.*:%%;
-	require ClearCase::ClearPrompt;
-	my $a = ClearCase::ClearPrompt::clearprompt(
-			    qw(proceed -def p -type ok -pro), "Continue $op?");
-	exit 0 unless $a == 0;
+      (my $op = (caller(2))[3]) =~ s%.*:%%;
+      require ClearCase::ClearPrompt;
+      my $a = ClearCase::ClearPrompt::clearprompt(
+                      qw(proceed -def p -type ok -pro), "Continue $op?");
+      exit 0 unless $a == 0;
     }
 }
 
@@ -520,11 +521,11 @@ sub AutoCheckedOut {
     return @args unless @auto;
     die Msg('E', "mutually exclusive flags: @auto") if @auto > 1;
     my $lsco = ClearCase::Argv->new('lsco', [qw(-cvi -s)],
-						    grep !/^-(d|cvi)/, @args);
+                                        grep !/^-(d|cvi)/, @args);
     $lsco->stderr(0) if grep !/^-/, @args; # in case v-p files are listed
     chomp(my @co = $lsco->qx);
     if (MSWIN) {
-	for (@co) { s%\\%/%g }
+      for (@co) { s%\\%/%g }
     }
     _ShowFound($ok, @co);
     exit 0 unless @co;
@@ -539,35 +540,35 @@ sub AutoNotCheckedOut {
     my $agg = shift;
     my $ok = shift;
     my $fd = shift;
-    shift;	# dump the command name (e.g. 'co')
+    shift;      # dump the command name (e.g. 'co')
     die Msg('E', "only -dir/-recurse supported: $agg") if $agg =~ /^-a/;
     # First derive a list of all FILE elements under the cwd.
     my @e = ClearCase::Argv->new(qw(find . -typ), $fd, qw(-cvi -nxn -pri))->qx;
     # Chomp and remove any leading "./".
     for (@e) {
-	chomp;
-	s%^\.[\\/]%%;
+      chomp;
+      s%^\.[\\/]%%;
     }
     # Turn the list into a hash.
     my %elems = map {$_ => 1} @e;
     # Then, narrow it to elems WITHIN the cwd unless -rec.
     if ($agg !~ /^-rec/) {
-	for (keys %elems) {
-	    delete $elems{$_} if m%[/\\]%;
-	}
+      for (keys %elems) {
+          delete $elems{$_} if m%[/\\]%;
+      }
     }
     # Remove those which are already checked out to this view.
     if (%elems) {
-	my $lsco = ClearCase::Argv->new('lsco', [qw(-cvi -s)]);
-	for ($lsco->args(keys %elems)->qx) {
-	    chomp;
-	    delete $elems{$_};
-	}
+      my $lsco = ClearCase::Argv->new('lsco', [qw(-cvi -s)]);
+      for ($lsco->args(keys %elems)->qx) {
+          chomp;
+          delete $elems{$_};
+      }
     }
     # Done: we have a list of all file elems that are not checked out.
     my @not_co = sort keys %elems;
     if (MSWIN) {
-	for (@not_co) { s%\\%/%g }
+      for (@not_co) { s%\\%/%g }
     }
     _ShowFound($ok, @not_co);
     exit 0 unless @not_co;
@@ -584,44 +585,44 @@ sub AutoViewPrivate {
     my @vps;
     # Can't use lsprivate in a snapshot view ...
     if (-e '.@@/main/0') {
-	my $lsp = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -oth), $scope]);
-	$lsp->opts($lsp->opts, '-do') if $do;
-	chomp(@vps = $lsp->qx);
+      my $lsp = Argv->new([$^X, '-S', $0, 'lsp'], [qw(-s -oth), $scope]);
+      $lsp->opts($lsp->opts, '-do') if $do;
+      chomp(@vps = $lsp->qx);
     } else {
-	require File::Spec;
-	File::Spec->VERSION(0.82);
-	die Msg('E', "-do flag not supported in snapshot views") if $do;
-	die Msg('E', "$scope flag not supported in snapshot views")
-							    if $scope =~ /^-a/;
-	my $ls = ClearCase::Argv->ls([qw(-s -view -vis)]);
-	$ls->opts($ls->opts, $scope) if $scope =~ /^-r/;
-	chomp(@vps = $ls->qx);
-	@vps = map {File::Spec->rel2abs($_)} @vps;
+      require File::Spec;
+      File::Spec->VERSION(0.82);
+      die Msg('E', "-do flag not supported in snapshot views") if $do;
+      die Msg('E', "$scope flag not supported in snapshot views")
+                                              if $scope =~ /^-a/;
+      my $ls = ClearCase::Argv->ls([qw(-s -view -vis)]);
+      $ls->opts($ls->opts, $scope) if $scope =~ /^-r/;
+      chomp(@vps = $ls->qx);
+      @vps = map {File::Spec->rel2abs($_)} @vps;
     }
     if (MSWIN) {
-	for (@vps) { s%\\%/%g }
+      for (@vps) { s%\\%/%g }
     }
     # Some v-p files we may not be interested in ...
     @vps = grep !m%$screen%, @vps if $screen;
     @vps = sort @vps;
 
     if ($parents && @vps && $scope =~ /^-(dir|rec)/) {
-	# In case the command was run in a v-p directory, traverse upwards
-	# towards the vob root adding parent directories till we reach
-	# a versioned dir.
-	require Cwd;
-	my $ctls = ClearCase::Argv->ls({autofail=>1}, [qw(-d -s -vob)], '.');
-	while (! $ctls->qx) {
-	    unshift(@vps, Cwd::getcwd());
-	    $vps[0] =~ s%\\%/%g if MSWIN;
-	    if (! Cwd::chdir('..')) {
-		my $err = "$!";
-		die Msg('E', Cwd::getcwd() . ": $err");
-	    }
-	}
+      # In case the command was run in a v-p directory, traverse upwards
+      # towards the vob root adding parent directories till we reach
+      # a versioned dir.
+      require Cwd;
+      my $ctls = ClearCase::Argv->ls({autofail=>1}, [qw(-d -s -vob)], '.');
+      while (! $ctls->qx) {
+          unshift(@vps, Cwd::getcwd());
+          $vps[0] =~ s%\\%/%g if MSWIN;
+          if (! Cwd::chdir('..')) {
+            my $err = "$!";
+            die Msg('E', Cwd::getcwd() . ": $err");
+          }
+      }
     }
 
-    _ShowFound($ok, @vps);	# may exit
+    _ShowFound($ok, @vps);      # may exit
     exit 0 unless @vps;
     return @vps;
 }
@@ -644,8 +645,8 @@ sub extensions {
     GetOptions(\%opt, qw(short long));
     my @exts = sort grep !/^_/, keys %ExtMap;
     for (@exts) {
-	print "$ExtMap{$_}::" if $opt{long};
-	print $_, "\n";
+      print "$ExtMap{$_}::" if $opt{long};
+      print $_, "\n";
     }
     exit 0;
 }
@@ -690,7 +691,7 @@ sub checkin {
     # Same for -cr999.
     my %opt;
     GetOptions(\%opt, qw(crnum=s cr999=s diff ok revert re999 mkhlink mk999))
-			if grep /^-(crn|dif|ok|rev|mkh)/, @ARGV;
+                  if grep /^-(crn|dif|ok|rev|mkh)/, @ARGV;
 
     die Msg('E', "-mkhlink flag requires -revert flag")
                         if ($opt{mkhlink} && ! $opt{revert});
@@ -703,15 +704,15 @@ sub checkin {
 
     # Parse checkin and (potential) diff flags into different optsets.
     $ci->parse(qw(c|cfile=s cqe|nc
-		    nwarn|cr|ptime|identical|rm|cact|cwork from=s));
+                nwarn|cr|ptime|identical|rm|cact|cwork from=s));
     if ($opt{'diff'} || $opt{revert}) {
-	$ci->optset('DIFF');
-	$ci->parseDIFF(qw(serial_format|diff_format|window columns|options=s
-			    graphical|tiny|hstack|vstack|predecessor));
+      $ci->optset('DIFF');
+      $ci->parseDIFF(qw(serial_format|diff_format|window columns|options=s
+                      graphical|tiny|hstack|vstack|predecessor));
     }
 
     # Now do auto-aggregation on the remaining args.
-    my @elems = AutoCheckedOut($opt{ok}, $ci->args);	# may exit
+    my @elems = AutoCheckedOut($opt{ok}, $ci->args);      # may exit
 
     # Turn symbolic links into their targets so CC will "do the right thing".
     for (@elems) { $_ = readlink if -l && defined readlink }
@@ -722,7 +723,7 @@ sub checkin {
     # (I know, there are lots of other editors but it just happens
     # to be easy to detect vim by its .swp file)
     for (@elems) {
-	die Msg('E', "$_: appears to be open in vim!") if -f ".$_.swp";
+      die Msg('E', "$_: appears to be open in vim!") if -f ".$_.swp";
     }
 
     # Unless -diff or -revert in use, we're done.
@@ -735,7 +736,7 @@ sub checkin {
     # In case ~/.clearcase_profile makes ci -nc the default, make sure
     # we prompt for a comment - unless checking in dirs only.
     $ci->opts('-cqe', $ci->opts)
-			if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
+                  if !grep(/^-c|^-nc$/, $ci->opts) && grep(-f, @elems);
 
     # Without -diff we only care about return code
     $diff->stdout(0) unless $opt{'diff'};
@@ -745,9 +746,9 @@ sub checkin {
 
     # Now process each element, diffing and then either ci-ing or unco-ing.
     for $elem (@elems) {
-	my $chng = $diff->args($elem)->system('DIFF');
-	if ($opt{revert} && !$chng) {
-	    # If -revert and -mkhlink and no changes, copy hlinks before unco
+      my $chng = $diff->args($elem)->system('DIFF');
+      if ($opt{revert} && !$chng) {
+          # If -revert and -mkhlink and no changes, copy hlinks before unco
             if ($opt{mkhlink}) {
                 my $ct = ClearCase::Argv->new({autochomp=>1});
                 my @links = grep {s/^<- //}
@@ -759,11 +760,11 @@ sub checkin {
                 }
             }
 
-	    # If -revert and no changes, unco instead of checkin
-	    ClearCase::Argv->unco(['-rm'], $elem)->system;
-	} else {
-	    $ci->args($elem)->system;
-	}
+          # If -revert and no changes, unco instead of checkin
+          ClearCase::Argv->unco(['-rm'], $elem)->system;
+      } else {
+          $ci->args($elem)->system;
+      }
     }
 
     # All done, no need to return to wrapper program.
@@ -813,30 +814,30 @@ sub diff {
 
     my $limit = 0;
     if (my @num = grep /^-\d+$/, @ARGV) {
-	@ARGV = grep !/^-\d+$/, @ARGV;
-	die Msg('E', "incompatible flags: @num") if @num > 1;
-	$limit = -int($num[0]);
+      @ARGV = grep !/^-\d+$/, @ARGV;
+      die Msg('E', "incompatible flags: @num") if @num > 1;
+      $limit = -int($num[0]);
     }
     my $diff = ClearCase::Argv->new(@ARGV);
     $diff->parse(qw(options=s serial_format|diff_format|window
-		    graphical|tiny|hstack|vstack|predecessor));
+                graphical|tiny|hstack|vstack|predecessor));
     my @args = $diff->args;
     my $auto = grep /^-(?:dir|rec|all|avo)/, @args;
-    my @elems = AutoCheckedOut(0, @args);	# may exit
+    my @elems = AutoCheckedOut(0, @args);      # may exit
     $diff->args(@elems);
     my @opts = $diff->opts;
     my @extra = ('-serial') if !grep(/^-(?:ser|dif|col|g)/, @opts);
     if ($limit && @elems == 1) {
-	$diff->args(Pred($elems[0], $limit, ClearCase::Argv->new), @elems);
+      $diff->args(Pred($elems[0], $limit, ClearCase::Argv->new), @elems);
     } else {
-	push(@extra, '-pred') if ($auto || @elems < 2) && !grep(/^-pre/, @opts);
+      push(@extra, '-pred') if ($auto || @elems < 2) && !grep(/^-pre/, @opts);
     }
     $diff->opts(@opts, @extra) if @extra;
     if ($auto && @elems > 1) {
-	for (@elems) { $diff->args($_)->system }
-	exit $?;
+      for (@elems) { $diff->args($_)->system }
+      exit $?;
     } else {
-	$diff->exec;
+      $diff->exec;
     }
 }
 
@@ -853,61 +854,61 @@ sub diffcr {
     GetOptions(\%opt, qw(data)) if grep m%^-d%, @ARGV;
     # If -data not passed, fall through to regular behavior.
     if ($opt{data}) {
-	GetOptions(\%opt, qw(long));
-	die Msg('E', "incompatible flags: -data and -long")
-	    if exists $opt{long};
+      GetOptions(\%opt, qw(long));
+      die Msg('E', "incompatible flags: -data and -long")
+          if exists $opt{long};
 
-	require Digest::MD5;
-	my $md51 = Digest::MD5->new;
-	my $md52 = Digest::MD5->new;
+      require Digest::MD5;
+      my $md51 = Digest::MD5->new;
+      my $md52 = Digest::MD5->new;
 
-	my $diffcr = ClearCase::Argv->new(@ARGV);
-	my @results = $diffcr->qx;
-	my %elems;
-	for (@results) {
-	    if (m%^([<>]\s+)(.*)@@([/\\]\S*)(.*)%) {
-		my($prefix, $elem, $version, $suffix) = ($1, $2, $3, $4);
-		next if ! -f $elem;
-		if (exists $elems{$elem}) {
-		    my $same = 0;
-		    if ($elems{$elem}->[0] eq $version) {
-			$same = 1;
-		    } else {
-			my $v1 = join('@@', $elem, $elems{$elem}->[0]);
-			my $v2 = join('@@', $elem, $version);
+      my $diffcr = ClearCase::Argv->new(@ARGV);
+      my @results = $diffcr->qx;
+      my %elems;
+      for (@results) {
+          if (m%^([<>]\s+)(.*)@@([/\\]\S*)(.*)%) {
+            my($prefix, $elem, $version, $suffix) = ($1, $2, $3, $4);
+            next if ! -f $elem;
+            if (exists $elems{$elem}) {
+                my $same = 0;
+                if ($elems{$elem}->[0] eq $version) {
+                  $same = 1;
+                } else {
+                  my $v1 = join('@@', $elem, $elems{$elem}->[0]);
+                  my $v2 = join('@@', $elem, $version);
 
-			if (open(V1, $v1) && open(V2, $v2)) {
-			    $md51->addfile(*V1);
-			    close(V1);
-			    my $digest1 = $md51->hexdigest;
+                  if (open(V1, $v1) && open(V2, $v2)) {
+                      $md51->addfile(*V1);
+                      close(V1);
+                      my $digest1 = $md51->hexdigest;
 
-			    $md52->addfile(*V2);
-			    close(V2);
-			    my $digest2 = $md52->hexdigest;
+                      $md52->addfile(*V2);
+                      close(V2);
+                      my $digest2 = $md52->hexdigest;
 
-			    if ($digest1 eq $digest2) {
-				$same = 1;
-			    } else {
-				chomp $elems{$elem}->[1];
-				$elems{$elem}->[1] .= " [$digest1]\n";
-				chomp $_;
-				$_ .= " [$digest2]\n";
-			    }
-			}
-		    }
-		    if (!$same) {
-			print $elems{$elem}->[1];
-			print;
-		    }
-		    delete $elems{$elem};
-		} else {
-		    $elems{$elem} = [$version, $_];
-		}
-	    } else {
-		print;
-	    }
-	}
-	exit(0);
+                      if ($digest1 eq $digest2) {
+                        $same = 1;
+                      } else {
+                        chomp $elems{$elem}->[1];
+                        $elems{$elem}->[1] .= " [$digest1]\n";
+                        chomp $_;
+                        $_ .= " [$digest2]\n";
+                      }
+                  }
+                }
+                if (!$same) {
+                  print $elems{$elem}->[1];
+                  print;
+                }
+                delete $elems{$elem};
+            } else {
+                $elems{$elem} = [$version, $_];
+            }
+          } else {
+            print;
+          }
+      }
+      exit(0);
     }
 }
 
@@ -937,10 +938,10 @@ sub edit {
     $co->parse(qw(out|branch=s reserved|unreserved|ndata|version|nwarn));
     $co->parseCI(qw(nwarn|cr|ptime|identical|rm from=s c|cfile=s cq|nc diff|revert));
     my $editor = $ENV{WINEDITOR} || $ENV{VISUAL} || $ENV{EDITOR} ||
-						    (MSWIN ? 'notepad' : 'vi');
+                                        (MSWIN ? 'notepad' : 'vi');
     # Handle -dir/-rec/etc
     if (grep /^-(?:dir|rec|all|avo)/, @ARGV) {
-	$co->args(grep -f, AutoCheckedOut(0, $co->args));	# may exit
+      $co->args(grep -f, AutoCheckedOut(0, $co->args));      # may exit
     }
     my $ed = Argv->new;
     $ed->prog($editor);
@@ -966,52 +967,52 @@ sub _helpmsg {
     return 0 if @_ > 2;
     my @text;
     if (@_ == 2) {
-	my $op = $_[1] = Canonic($_[1]);
-	@text = ClearCase::Argv->new(@_)->stderr(0)->qx;
-	if (Extension($op)) {
-	    chomp $text[-1] if @text;;
-	    if (my $msg = $$op) {
-		chomp $msg;
-		my $indent;
+      my $op = $_[1] = Canonic($_[1]);
+      @text = ClearCase::Argv->new(@_)->stderr(0)->qx;
+      if (Extension($op)) {
+          chomp $text[-1] if @text;;
+          if (my $msg = $$op) {
+            chomp $msg;
+            my $indent;
                 if (! @text or $text[0] =~ 'Usage: help ') {
-	            @text = ("Usage: * ");
+                  @text = ("Usage: * ");
                     $indent = "Usage: * $op ";
-		    $msg =~ s/^help/$op/;
+                $msg =~ s/^help/$op/;
                 } else {
-		    ($indent) = ($text[-1] =~ /^(\s*)/);
+                ($indent) = ($text[-1] =~ /^(\s*)/);
                     if (!$indent) {
-		        ($indent) = ($text[0] =~ /^([^\s]+[\s*]+[^\s]+\s+)/);
+                    ($indent) = ($text[0] =~ /^([^\s]+[\s*]+[^\s]+\s+)/);
                     }
                 }
                 $indent = " " x (length($indent) - 2);
-		$msg =~ s/\n([^\*])/\n  $1/gs;
-		$msg =~ s/\n/\n$indent/gs;
-		push(@text, $msg);
-	    }
+            $msg =~ s/\n([^\*])/\n  $1/gs;
+            $msg =~ s/\n/\n$indent/gs;
+            push(@text, $msg);
+          }
             push @text, "\n";
-	}
+      }
         print $FH @text;
-	exit $rc;
+      exit $rc;
     } else {
-	@text = ClearCase::Argv->new(@_)->stderr(0)->qx;
+      @text = ClearCase::Argv->new(@_)->stderr(0)->qx;
     }
     print $FH @text, "\n";
     my $bars = '='x70;
     print $FH "$bars\n= ClearCase::Wrapper Extensions:\n$bars\n\n";
     for (sort grep !/^_/, keys %ClearCase::Wrapper::ExtMap) {
-	next if m%^(lsp(riv)?|c.)$%;
-	$cmd = "ClearCase::Wrapper::$_";
-	my (@text) = grep {$_} split /\n/, $$cmd;
-	next unless @text;
-        for (@text[1..$#text]) {s/^/ /;}
-	$text =~ s%^(help)?\s+%%s;
-	my $star = ClearCase::Wrapper::Native($_) ? '' : '* ';
-        my $leader = "Usage: $star$_";
-        for (@text) {
-            s/^\*/ */;
-	    print $FH "$leader$_\n";
-            $leader =~ s/./ /g;
-        }
+      next if m%^(lsp(riv)?|c.)$%;
+      $cmd = "ClearCase::Wrapper::$_";
+      my (@text) = grep {$_} split /\n/, $$cmd;
+      next unless @text;
+      for (@text[1..$#text]) {s/^/ /;}
+      $text =~ s%^(help)?\s+%%s;
+      my $star = ClearCase::Wrapper::Native($_) ? '' : '* ';
+      my $leader = "Usage: $star$_";
+      for (@text) {
+        s/^\*/ */;
+        print $FH "$leader$_\n";
+        $leader =~ s/./ /g;
+      }
     }
     exit $rc
 }
@@ -1046,7 +1047,7 @@ The B<-ext> flag sorts the output by extension.
 sub lsprivate {
     my %opt;
     GetOptions(\%opt, qw(directory recurse all avobs eclipsed
-						ext relative type=s visible));
+                                    ext relative type=s visible));
 
     my $lsp = ClearCase::Argv->new(@ARGV);
     $lsp->parse(qw(short co|do|other|long tag=s invob=s));
@@ -1055,81 +1056,81 @@ sub lsprivate {
 
     # Extension: allow [dir] argument
     if ($lsp->args) {
-	chomp(($pname) = $lsp->args);
-	$lsp->args;
-	# Default to -rec but accept -dir.
-	$opt{recurse} = 1 unless $opt{directory} || $opt{all} || $opt{avobs};
+      chomp(($pname) = $lsp->args);
+      $lsp->args;
+      # Default to -rec but accept -dir.
+      $opt{recurse} = 1 unless $opt{directory} || $opt{all} || $opt{avobs};
     }
 
     # Extension: implement [-dir|-rec|-all|-avobs]
-    if ($opt{directory} || $opt{recurse} || $opt{all} || $opt{ext}) {
-	require Cwd;
-	my $dir = Cwd::abs_path($pname);
-	my $tag = $lsp->flag('tag');
-	$lsp->opts($lsp->opts, '-invob', $pname)
-			if ($opt{directory} || $opt{recurse} || $opt{all}) &&
-			    !$lsp->flag('invob');
-	if ($opt{directory} || $opt{recurse}) {
-	    if ($dir =~ s%/+view/([^/]+)%%) {	# UNIX view-extended path
-		$tag ||= $1;
-	    } elsif ($dir =~ s%^[A-Z]:%%) {	# WIN view-extended path
-		if ($tag) {
-		    $dir =~ s%^/$tag%%i;
-		} else {
-		    $tag = ViewTag(@ARGV);
-		}
-	    } elsif (!$tag) {
-		$tag = ViewTag(@ARGV);
-	    }
-	    $lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
-	}
-	chomp(my @privs = sort $lsp->qx);
-	exit $? if $? || !@privs;
-	# Strip out all results which are not eclipsed. An element
-	# is eclipsed if (a) there's a view-private copy,
-	# (b) there's also a versioned copy, and (c) it's not checked out.
-	if ($opt{eclipsed}) {
-	    my %coed = ();
-	    if ($lsp->flag('short')) {
-		%coed = map {chomp; $_ => 1}
-				ClearCase::Argv->lsco(qw(-avo -s -cvi))->qx;
-	    }
-	    my @t_privs;
-	    for (@privs) {
-		next if m%\s\[checkedout\]%;
-		next unless -e "$_@@/main/0";
-		my $sv = $_;
-		$sv =~ s%(/+view)?/$tag%% if $tag;
-		next if exists $coed{$sv};
-		push(@t_privs, $_);
-	    }
-	    @privs = @t_privs;
-	}
-	if ($opt{directory} || $opt{recurse}) {
-	    for (@privs) {
-		if (MSWIN) {
-		    s/^[A-Z]://i;
-		    s%\\%/%g;
-		}
-		s%(/+view)?/$tag%%;
-	    }
-	    @privs = map {$_ eq $dir ? "$_/" : $_} @privs;
-	    my $job = $opt{relative} ? 'map ' : 'grep ';
-	    $job .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
-	    $opt{type} ||= 'e' if $opt{visible};
-	    $job = "grep {-$opt{type}} $job" if $opt{type};
-	    eval qq(\@privs = $job \@privs);
-	    exit 0 if !@privs;
-	}
-	if ($opt{ext}) {	# sort by extension
-	    require File::Basename;
-	    @privs = map  { $_->[0] }
-	       sort { "$a->[1]$a->[2]$a->[3]" cmp "$b->[1]$b->[2]$b->[3]" }
-	       map  { [$_, (File::Basename::fileparse($_, '\.\w+'))[2,0,1]] }
-	       @privs;
-	}
-	for (@privs) { print $_, "\n" }
-	exit 0;
+    if ($opt{directory} || $opt{recurse} || $opt{all} || $opt{avobs} || $opt{eclipsed} || $opt{ext}) {
+      require Cwd;
+      my $dir = Cwd::abs_path($pname);
+      my $tag = $lsp->flag('tag');
+      $lsp->opts($lsp->opts, '-invob', $pname)
+                  if ($opt{directory} || $opt{recurse} || $opt{all}) &&
+                      !$lsp->flag('invob');
+      if ($opt{directory} || $opt{recurse}) {
+          if ($dir =~ s%/+view/([^/]+)%%) {      # UNIX view-extended path
+            $tag ||= $1;
+          } elsif ($dir =~ s%^[A-Z]:%%) {      # WIN view-extended path
+            if ($tag) {
+                $dir =~ s%^/$tag%%i;
+            } else {
+                $tag = ViewTag(@ARGV);
+            }
+          } elsif (!$tag) {
+            $tag = ViewTag(@ARGV);
+          }
+          $lsp->opts($lsp->opts, '-tag', $tag) if !$lsp->flag('tag');
+      }
+      chomp(my @privs = sort $lsp->qx);
+      exit $? if $? || !@privs;
+      # Strip out all results which are not eclipsed. An element
+      # is eclipsed if (a) there's a view-private copy,
+      # (b) there's also a versioned copy, and (c) it's not checked out.
+      if ($opt{eclipsed}) {
+          my %coed = ();
+          if ($lsp->flag('short')) {
+            %coed = map {chomp; $_ => 1}
+                        ClearCase::Argv->lsco(qw(-avo -s -cvi))->qx;
+          }
+          my @t_privs;
+          for (@privs) {
+            next if m%\s\[checkedout\]%;
+            next unless -e "$_@@/main/0";
+            my $sv = $_;
+            $sv =~ s%(/+view)?/$tag%% if $tag;
+            next if exists $coed{$sv};
+            push(@t_privs, $_);
+          }
+          @privs = @t_privs;
+      }
+      if ($opt{directory} || $opt{recurse}) {
+          for (@privs) {
+            if (MSWIN) {
+                s/^[A-Z]://i;
+                s%\\%/%g;
+            }
+            s%(/+view)?/$tag%%;
+          }
+          @privs = map {$_ eq $dir ? "$_/" : $_} @privs;
+          my $job = $opt{relative} ? 'map ' : 'grep ';
+          $job .= $opt{recurse} ? '{m%^$dir/(.*)%}' : '{m%^$dir/([^/]*)$%s}';
+          $opt{type} ||= 'e' if $opt{visible};
+          $job = "grep {-$opt{type}} $job" if $opt{type};
+          eval qq(\@privs = $job \@privs);
+          exit 0 if !@privs;
+      }
+      if ($opt{ext}) {      # sort by extension
+          require File::Basename;
+          @privs = map  { $_->[0] }
+             sort { "$a->[1]$a->[2]$a->[3]" cmp "$b->[1]$b->[2]$b->[3]" }
+             map  { [$_, (File::Basename::fileparse($_, '\.\w+'))[2,0,1]] }
+             @privs;
+      }
+      for (@privs) { print $_, "\n" }
+      exit 0;
     }
     $lsp->exec;
 }
@@ -1174,7 +1175,7 @@ sub mkelem {
     my %opt;
     GetOptions(\%opt, qw(directory recurse all avobs do ok));
     die Msg('E', "-all|-avobs flags not supported for mkelem")
-					if $opt{all} || $opt{avobs};
+                              if $opt{all} || $opt{avobs};
     return unless $opt{directory} || $opt{recurse};
 
     # Derive the list of view-private files to work on. This may exit
@@ -1193,42 +1194,42 @@ sub mkelem {
     require File::Basename;
     my %seen;
     for (@vps) {
-	my $d = File::Basename::dirname($_);
-	next if ! $d || $dirs{$d};
-	next if $seen{$d}++;
-	my $lsd = $ct->ls(['-d'], $d)->qx;
-	# If no version selector was given it's a view-private dir and
-	# will be handled below.
-	next unless $lsd =~ /\sRule:\s/;
-	# If already checked out, nothing to do.
-	next if $lsd =~ /CHECKEDOUT$/;
-	# Now we know it's an element and needs to be checked out.
-	$dirs{$d}++;
+      my $d = File::Basename::dirname($_);
+      next if ! $d || $dirs{$d};
+      next if $seen{$d}++;
+      my $lsd = $ct->ls(['-d'], $d)->qx;
+      # If no version selector was given it's a view-private dir and
+      # will be handled below.
+      next unless $lsd =~ /\sRule:\s/;
+      # If already checked out, nothing to do.
+      next if $lsd =~ /CHECKEDOUT$/;
+      # Now we know it's an element and needs to be checked out.
+      $dirs{$d}++;
     }
     $ct->co(['-nc'], keys %dirs)->system if %dirs;
 
     # Process candidate directories here, then do files below.
     for my $cand (@vps) {
-	if (! -d $cand) {
-	    push(@ARGV, $cand);
-	    next;
-	}
-	# Now we know we're dealing with directories.  These must not
-	# exist at mkelem time so we move them aside, make
-	# a versioned dir, then move all the files from the original
-	# back into the new dir (still as view-private files).
-	my $tmpdir = "$cand.$$.keep.d";
-	die Msg('E', "$cand: $!") if !rename($cand, $tmpdir);
-	$ct->mkdir(['-nc'], $cand)->system;
-	opendir(DIR, $tmpdir) || die Msg('E', "$tmpdir: $!");
-	while (defined(my $i = readdir(DIR))) {
-	    next if $i eq '.' || $i eq '..';
-	    die Msg('E', "$cand/$i: $!") if !rename("$tmpdir/$i", "$cand/$i");
-	}
-	closedir DIR;
-	warn Msg('W', "$tmpdir: $!") unless rmdir $tmpdir;
-	# Keep a record of directories to be checked in when done.
-	$dirs{$cand}++;
+      if (! -d $cand) {
+          push(@ARGV, $cand);
+          next;
+      }
+      # Now we know we're dealing with directories.  These must not
+      # exist at mkelem time so we move them aside, make
+      # a versioned dir, then move all the files from the original
+      # back into the new dir (still as view-private files).
+      my $tmpdir = "$cand.$$.keep.d";
+      die Msg('E', "$cand: $!") if !rename($cand, $tmpdir);
+      $ct->mkdir(['-nc'], $cand)->system;
+      opendir(DIR, $tmpdir) || die Msg('E', "$tmpdir: $!");
+      while (defined(my $i = readdir(DIR))) {
+          next if $i eq '.' || $i eq '..';
+          die Msg('E', "$cand/$i: $!") if !rename("$tmpdir/$i", "$cand/$i");
+      }
+      closedir DIR;
+      warn Msg('W', "$tmpdir: $!") unless rmdir $tmpdir;
+      # Keep a record of directories to be checked in when done.
+      $dirs{$cand}++;
     }
 
     # Now we've made all the directories, do the files in one fell swoop.
@@ -1239,8 +1240,8 @@ sub mkelem {
     # we could be smarter here because it really only needs flushing
     # if one of the dirs was the cwd.
     if (%dirs) {
-	$ct->ci(['-nc'], keys %dirs)->system if grep /^-ci$/, @ARGV;
-	$ct->setcs(['-curr'])->system;
+      $ct->ci(['-nc'], keys %dirs)->system if grep /^-ci$/, @ARGV;
+      $ct->setcs(['-curr'])->system;
     }
 
     # Done - don't drop back to main program.
